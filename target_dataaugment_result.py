@@ -1,13 +1,13 @@
 import random
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import datasets, transforms
 from pytorch_lightning import Trainer, LightningModule
 import os
 import numpy as np
 from PIL import Image
 import imagehash
-
+import pickle
 
 # Define CIFAR-10 Model
 class CIFAR10ModelCNN(LightningModule):
@@ -42,7 +42,7 @@ class CIFAR10ModelCNN(LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
 
 
-# Binary search for aHash
+# Binary search for pHash
 def binary_search(arr, target):
     left, right = 0, len(arr) - 1
     while left <= right:
@@ -56,52 +56,47 @@ def binary_search(arr, target):
     return False
 
 
-# Calculate aHash
-def calculate_ahash_decimal(image):
+# Calculate pHash
+def calculate_phash_decimal(image):
     pil_image = Image.fromarray(image)
-    ahash_hex = str(imagehash.average_hash(pil_image))  # Calculate aHash in hex
-    return int(ahash_hex, 16)  # Convert to decimal
+    phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
+    return int(phash_hex, 16)  # Convert to decimal
+
 
 def apply_random_augmentation(image):
     """
     Randomly apply 1, 2, or 3 transformations from transform_augment.
     """
     augmentations = [
-        transforms.RandomHorizontalFlip(p=1.0),  # Always apply horizontal flip
-        transforms.RandomRotation(degrees=(20, 22)),  # Rotate within 20-22 degrees
-        transforms.RandomAffine(degrees=(10, 12), translate=(0.1, 0.1)),  # Affine transform with translation
-        transforms.RandomAffine(degrees=(3, 5), scale=(0.95, 0.95)),  # Affine transform with scale
-        transforms.AugMix(severity=7, mixture_width=5, chain_depth=3, alpha=0.5),  # Stronger AugMix transformation
-        transforms.RandomResizedCrop(size=(32, 32), scale=(0.9, 0.9)),  # Randomly crop and resize the image
-        transforms.RandomPerspective(distortion_scale=0.08, p=1),  # Apply perspective transformation
-        transforms.RandomEqualize(p=1),  # Equalize the histogram of the image
-        transforms.RandomCrop(size=(32, 32), padding=4),  # Randomly crop the image
+        transforms.RandomHorizontalFlip(p=1.0),
+        transforms.RandomRotation(degrees=(20, 22)),
+        transforms.RandomAffine(degrees=(10, 12), translate=(0.1, 0.1)),
+        transforms.RandomAffine(degrees=(3, 5), scale=(0.95, 0.95)),
+        transforms.RandomResizedCrop(size=(32, 32), scale=(0.9, 0.9)),
+        transforms.RandomPerspective(distortion_scale=0.08, p=1),
+        transforms.RandomEqualize(p=1),
+        transforms.RandomCrop(size=(32, 32), padding=4),
         transforms.GaussianBlur(kernel_size=(3, 3), sigma=(2, 2)),
         transforms.Compose([transforms.CenterCrop(size=(28, 28)), transforms.Pad(padding=2, padding_mode="edge")]),
         transforms.RandomGrayscale(p=1.0),
         transforms.RandomAdjustSharpness(sharpness_factor=4, p=0.5),
-        transforms.RandomPosterize(bits=4, p=1),  # original bits is 8
+        transforms.RandomPosterize(bits=4, p=1),
     ]
 
-    probabilities = [0.1, 0.1, 0.2, 0.6]
-    num_augmentations = random.choices([1, 2, 3, 4], probabilities)[0]
+    probabilities = [0.7, 0.2, 0.1]
+    num_augmentations = random.choices([1, 2, 3], probabilities)[0]
     
     selected_augmentations = random.sample(augmentations, num_augmentations)
 
-    # num_augmentations = 1
-    # selected_augmentations = random.sample(augmentations, num_augmentations)
-
-    # Ensure the input image is uint8 before applying augmentations
     image = (image * 255).to(torch.uint8)
 
-    # Sequentially apply the selected augmentations
     for augment in selected_augmentations:
         image = augment(image)
 
-    # Convert back to float32 for compatibility with the model
     image = image.to(torch.float32) / 255.0
 
     return image
+
 
 def _compute_predictions(model, dataloader, device, sorted_hashes=None):
     model.eval()
@@ -112,11 +107,10 @@ def _compute_predictions(model, dataloader, device, sorted_hashes=None):
         for inputs, label in dataloader:
             augmented_inputs = []
             for img in inputs:
-                img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)  # Convert tensor to uint8
-                ahash_decimal = calculate_ahash_decimal(img_array)
+                img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+                phash_decimal = calculate_phash_decimal(img_array)
 
-                # Check if sorted_hashes is not None and has elements
-                if sorted_hashes is not None and sorted_hashes.size > 0 and binary_search(sorted_hashes, ahash_decimal):
+                if sorted_hashes is not None and sorted_hashes.size > 0 and binary_search(sorted_hashes, phash_decimal):
                     img = apply_random_augmentation(img)
                     tempsum += 1
 
@@ -137,7 +131,7 @@ def _compute_predictions(model, dataloader, device, sorted_hashes=None):
 
 
 # Generate shadow datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=50000, test_size=10000):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=25000, test_size=5000):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -175,51 +169,53 @@ def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, devic
     return shadow_train_res, shadow_test_res
 
 
-# Generate sorted_train_ahashes
-def generate_sorted_train_ahashes(dataset):
-    ahashes = []
+# Generate sorted_train_phashes
+def generate_sorted_train_phashes(dataset):
+    phashes = []
     for img, _ in dataset:
-        img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)  # Convert tensor to uint8
-        ahash_decimal = calculate_ahash_decimal(img_array)
-        ahashes.append(ahash_decimal)
+        img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+        phash_decimal = calculate_phash_decimal(img_array)
+        phashes.append(phash_decimal)
 
-    sorted_ahashes = np.sort(ahashes)
-    np.save("sorted_train_ahashes_decimal.npy", sorted_ahashes)
-    print("Sorted aHash values saved to sorted_train_ahashes_decimal.npy")
-    return sorted_ahashes
+    sorted_phashes = np.sort(phashes)
+    np.save("sorted_train_phashes_decimal.npy", sorted_phashes)
+    print("Sorted pHash values saved to sorted_train_phashes_decimal.npy")
+    return sorted_phashes
+
+# Load partitioned CIFAR-10 dataset
+def load_partitioned_cifar10(file_path):
+    with open(file_path, 'rb') as f:
+        data = pickle.load(f)
+    x_train, y_train = data['train_data'], data['train_labels']
+    x_test, y_test = data['test_data'], data['test_labels']
+    return x_train, y_train, x_test, y_test
 
 
-# Load CIFAR-10 data
-data_root = './data'
+# Replace CIFAR-10 with partitioned dataset
+partition_file = 'cifar10_partition1.pkl'
+x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-if not os.path.exists(data_root):
-    os.makedirs(data_root)
-
+# Convert to PyTorch Dataset
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
 ])
 
-cifar10_train = datasets.CIFAR10(
-    root=data_root,
-    train=True,
-    download=True,
-    transform=transform
-)
+x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255  # Convert to channels-first format
+y_train = torch.tensor(y_train).squeeze().long()
 
-cifar10_test = datasets.CIFAR10(
-    root=data_root,
-    train=False,
-    download=True,
-    transform=transform
-)
+x_test = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255
+y_test = torch.tensor(y_test).squeeze().long()
+
+train_dataset = TensorDataset(x_train, y_train)
+test_dataset = TensorDataset(x_test, y_test)
 
 # Generate sorted hashes
-sorted_train_hashes = generate_sorted_train_ahashes(cifar10_train)
+sorted_train_hashes = generate_sorted_train_phashes(train_dataset)
 
 # Generate shadow datasets
 num_shadow = 1
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, cifar10_train, cifar10_test)
+shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
 
 # Initialize the main model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
