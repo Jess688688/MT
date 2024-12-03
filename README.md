@@ -1,1 +1,2 @@
 # Master_Thesis
+# cifar10_partition1.pkl and cifar10_partition2.pkl should be totally the same on different servers, and prevent run one_to_two.py again on another server because it will randomly generate two pkl files. Just copy from one server to another.
