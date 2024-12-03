@@ -79,7 +79,7 @@ def apply_random_augmentation(image):
         transforms.GaussianBlur(kernel_size=(3, 3), sigma=(2, 2)),
         transforms.Compose([transforms.CenterCrop(size=(28, 28)), transforms.Pad(padding=2, padding_mode="edge")]),
         transforms.RandomGrayscale(p=1.0),
-        transforms.RandomAdjustSharpness(sharpness_factor=4, p=0.5),
+        transforms.RandomAdjustSharpness(sharpness_factor=4, p=1),
         transforms.RandomPosterize(bits=4, p=1),
     ]
 
