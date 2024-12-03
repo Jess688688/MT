@@ -64,9 +64,7 @@ def calculate_phash_decimal(image):
 
 
 def apply_random_augmentation(image):
-    """
-    Randomly apply 1, 2, or 3 transformations from transform_augment.
-    """
+        
     augmentations = [
         transforms.RandomHorizontalFlip(p=1.0),
         transforms.RandomRotation(degrees=(20, 22)),
@@ -82,9 +80,9 @@ def apply_random_augmentation(image):
         transforms.RandomAdjustSharpness(sharpness_factor=4, p=1),
         transforms.RandomPosterize(bits=4, p=1),
     ]
-
-    probabilities = [0.7, 0.2, 0.1]
-    num_augmentations = random.choices([1, 2, 3], probabilities)[0]
+        
+    probabilities = [0.5, 0.5]
+    num_augmentations = random.choices([2, 3], probabilities)[0]
     
     selected_augmentations = random.sample(augmentations, num_augmentations)
 
