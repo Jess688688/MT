@@ -73,6 +73,7 @@ def apply_composite(img, label, pca_folder="PCA", alpha=0.7):
     fused_tensor = fused_tensor.to(torch.float32) / 255.0
     return fused_tensor
 
+
 def apply_random_augmentation(image):
         
     augmentations = [
@@ -92,9 +93,9 @@ def apply_random_augmentation(image):
     ]
     
     # probabilities = [0.5, 0.5]
-    # num_augmentations = random.choices([2, 3], probabilities)[0]
+    num_augmentations = random.choice([1,2])
     
-    num_augmentations = 13
+    # num_augmentations = 13
     selected_augmentations = random.sample(augmentations, num_augmentations)
 
     image = (image * 255).to(torch.uint8)

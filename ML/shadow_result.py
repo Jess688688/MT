@@ -58,7 +58,7 @@ def _compute_predictions(model, dataloader, device):
 
 
 # Function to generate shadow datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=10000, test_size=2000):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=5000, test_size=1000):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
