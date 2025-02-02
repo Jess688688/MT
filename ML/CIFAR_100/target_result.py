@@ -7,56 +7,32 @@ import os
 import pickle
 
 class CIFAR100ModelCNN(LightningModule):
-    def __init__(
-            self,
-            in_channels=3,
-            out_channels=100,  # 修改 out_channels=100 以匹配 CIFAR-100
-            learning_rate=1e-3
-    ):
+    def __init__(self, in_channels=3, out_channels=100, learning_rate=5e-4):
         super().__init__()
         self.save_hyperparameters()
 
         self.conv1 = torch.nn.Sequential(
             torch.nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(64),
             torch.nn.ReLU(inplace=True)
         )
         self.conv2 = torch.nn.Sequential(
             torch.nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
             torch.nn.ReLU(inplace=True),
             torch.nn.MaxPool2d(2)
-        )
-
-        self.res1 = torch.nn.Sequential(
-            torch.nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
-            torch.nn.ReLU(inplace=True)
         )
 
         self.conv3 = torch.nn.Sequential(
             torch.nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(256),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.MaxPool2d(2)
-        )
-        self.conv4 = torch.nn.Sequential(
-            torch.nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
+            torch.nn.BatchNorm2d(256),  # 恢复 BatchNorm
             torch.nn.ReLU(inplace=True),
             torch.nn.MaxPool2d(2)
         )
 
-        self.res2 = torch.nn.Sequential(
-            torch.nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
+        self.conv4 = torch.nn.Sequential(
+            torch.nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            torch.nn.BatchNorm2d(512),  # 恢复 BatchNorm
             torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
-            torch.nn.ReLU(inplace=True)
+            torch.nn.MaxPool2d(2)
         )
 
         self.classifier = torch.nn.Sequential(
@@ -70,10 +46,8 @@ class CIFAR100ModelCNN(LightningModule):
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
-        x = self.res1(x) + x
         x = self.conv3(x)
         x = self.conv4(x)
-        x = self.res2(x) + x
         x = self.classifier(x)
         return x
 
@@ -84,9 +58,7 @@ class CIFAR100ModelCNN(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-
-
+        return torch.optim.Adam(self.parameters(), lr=5e-4, weight_decay=1e-4)
 
 
 
@@ -120,7 +92,7 @@ def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=25000
     return shadow_train, shadow_test
 
 # Generate Attack Dataset
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=20):
+def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=10):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
 
