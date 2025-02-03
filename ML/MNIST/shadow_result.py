@@ -3,11 +3,9 @@ import torch
 from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
-import os
 import pickle
+import os
 
-
-# MNIST Model Definition
 class MNISTModelCNN(LightningModule):
     def __init__(
             self,
@@ -68,8 +66,7 @@ class MNISTModelCNN(LightningModule):
         return optimizer
 
 
-
-# Compute Predictions
+# Function to compute predictions
 def _compute_predictions(model, dataloader, device):
     model.eval()
     predictions, labels = [], []
@@ -85,19 +82,22 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-# Generate Shadow Datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=29997, test_size=4999):
-    shadow_train, shadow_test = [], []
-    
-    train_indices = random.sample(range(len(train_data)), train_size)
-    test_indices = random.sample(range(len(test_data)), test_size)
 
-    shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True))
-    shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False))
+# Function to generate shadow datasets
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=3000, test_size=500):
+    shadow_train, shadow_test = [], []
+
+    for _ in range(num_shadow):
+        train_indices = random.sample(range(len(train_data)), train_size)
+        test_indices = random.sample(range(len(test_data)), test_size)
+
+        shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True))
+        shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False))
 
     return shadow_train, shadow_test
 
-# Generate Attack Dataset
+
+# Main attack dataset generation
 def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=500):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
@@ -121,6 +121,7 @@ def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, devic
 
     return shadow_train_res, shadow_test_res
 
+
 # Load partitioned MNIST dataset
 def load_partitioned_mnist(file_path):
     with open(file_path, 'rb') as f:
@@ -129,8 +130,9 @@ def load_partitioned_mnist(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-# Replace CIFAR-10 with partitioned MNIST dataset
-partition_file = 'mnist_partition1.pkl'
+
+# Replace CIFAR-10 with mnist_partition2.pkl
+partition_file = 'mnist_partition2.pkl'
 x_train, y_train, x_test, y_test = load_partitioned_mnist(partition_file)
 
 # Convert to PyTorch Dataset
@@ -139,17 +141,18 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))
 ])
 
+# Convert to Tensor and normalize
 x_train = torch.tensor(x_train).unsqueeze(1).float() / 255  # Convert to channels-first format
 y_train = torch.tensor(y_train).squeeze().long()
-
 x_test = torch.tensor(x_test).unsqueeze(1).float() / 255
 y_test = torch.tensor(y_test).squeeze().long()
 
+# Create PyTorch datasets
 train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Generate shadow datasets
-num_shadow = 1
+num_shadow = 10
 shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
 
 # Initialize the main model
@@ -157,14 +160,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = MNISTModelCNN().to(device)
 
 # Generate attack dataset
-target_train_res, target_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 
-print("Target Training Results:", target_train_res)
-print("Target Testing Results:", target_test_res)
+print("Shadow Training Results:", shadow_train_res)
+print("Shadow Testing Results:", shadow_test_res)
 
 # Save results
-torch.save(target_train_res, "target_train_res.pt")
-torch.save(target_test_res, "target_test_res.pt")
+torch.save(shadow_train_res, "shadow_train_res.pt")
+torch.save(shadow_test_res, "shadow_test_res.pt")
 
-print("Target training results saved to target_train_res.pt")
-print("Target testing results saved to target_test_res.pt")
+print("Shadow training results saved to shadow_train_res.pt")
+print("Shadow testing results saved to shadow_test_res.pt")
