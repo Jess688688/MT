@@ -39,7 +39,7 @@ class CIFAR10ModelCNN(LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
 
 # Compute Predictions
-def _compute_predictions(model, dataloader, device):
+def compute_predictions(model, dataloader, device):
     model.eval()
     predictions, labels = [], []
 
@@ -56,43 +56,20 @@ def _compute_predictions(model, dataloader, device):
     return predictions, labels
 
 
-# Generate Shadow Datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=25000, test_size=5000):
-    shadow_train, shadow_test = [], []
-    
+def generate_local_datasets(train_data, test_data, train_size=25000, test_size=5000):
     train_indices = random.sample(range(len(train_data)), train_size)
     test_indices = random.sample(range(len(test_data)), test_size)
 
-    shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True))
-    shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False))
+    local_train_loader = DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True)
+    local_test_loader = DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False)
 
-    return shadow_train, shadow_test
+    return local_train_loader, local_test_loader
 
-
-# Generate Attack Dataset
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
-    s_tr_pre, s_tr_label = [], []
-    s_te_pre, s_te_label = [], []
-
-    for i in range(num_shadow):
-        shadow_model = CIFAR10ModelCNN()
-        shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
-        shadow_trainer.fit(shadow_model, shadow_train[i])
-
-        tr_pre, tr_label = _compute_predictions(shadow_model.to(device), shadow_train[i], device)
-        te_pre, te_label = _compute_predictions(shadow_model.to(device), shadow_test[i], device)
-
-        s_tr_pre.append(tr_pre)
-        s_tr_label.append(tr_label)
-
-        s_te_pre.append(te_pre)
-        s_te_label.append(te_label)
-
-    shadow_train_res = (torch.cat(s_tr_pre, dim=0), torch.cat(s_tr_label, dim=0))
-    shadow_test_res = (torch.cat(s_te_pre, dim=0), torch.cat(s_te_label, dim=0))
-
-    return shadow_train_res, shadow_test_res
-
+# Train Local Model
+def train_local_model(model, train_loader, device, max_epochs=3):
+    trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
+    trainer.fit(model, train_loader)
+    return model
 
 # Load partitioned CIFAR-10 dataset
 def load_partitioned_cifar10(file_path):
@@ -101,7 +78,6 @@ def load_partitioned_cifar10(file_path):
     x_train, y_train = data['train_data'], data['train_labels']
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
-
 
 # Replace CIFAR-10 with partitioned dataset
 partition_file = 'cifar10_partition1.pkl'
@@ -122,34 +98,25 @@ y_test = torch.tensor(y_test).squeeze().long()
 train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
-# Generate shadow datasets
-num_shadow = 1
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
+local_train_loader, local_test_loader = generate_local_datasets(train_dataset, test_dataset)
 
 # Initialize the main model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CIFAR10ModelCNN().to(device)
 
-# Generate attack dataset
-target_train_res, target_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+# Train the model
+trained_model = train_local_model(model, local_train_loader, device)
 
-print("Target Training Results:", target_train_res)
-print("Target Testing Results:", target_test_res)
+# Compute predictions
+train_results = compute_predictions(trained_model.to(device), local_train_loader, device)
+test_results = compute_predictions(trained_model.to(device), local_test_loader, device)
+
+print("Training Results:", train_results)
+print("Testing Results:", test_results)
 
 # Save results
-torch.save(target_train_res, "target_train_res.pt")
-torch.save(target_test_res, "target_test_res.pt")
+torch.save(train_results, "train_results.pt")
+torch.save(test_results, "test_results.pt")
 
-print("Target training results saved to target_train_res.pt")
-print("Target testing results saved to target_test_res.pt")
-
-
-
-
-
-
-
-
-
-
-
+print("Training results saved to train_results.pt")
+print("Testing results saved to test_results.pt")
