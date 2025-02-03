@@ -7,56 +7,44 @@ import os
 import pickle
 
 
-
-
-# MNIST Model Definition
 class MNISTModelCNN(LightningModule):
-    def __init__(
-            self,
-            in_channels=1,
-            out_channels=10,
-            learning_rate=1e-3
-    ):
+    def __init__(self, in_channels=1, out_channels=10, learning_rate=1e-4):
         super().__init__()
         self.save_hyperparameters()
 
-        self.example_input_array = torch.zeros(1, 1, 28, 28)
-        self.learning_rate = learning_rate
+        self.conv1 = torch.nn.Conv2d(in_channels, 128, kernel_size=(3, 3), padding=1)
+        self.conv2 = torch.nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1)
+        self.conv3 = torch.nn.Conv2d(256, 512, kernel_size=(3, 3), padding=1)
+        self.conv4 = torch.nn.Conv2d(512, 1024, kernel_size=(3, 3), padding=1)
+        self.conv5 = torch.nn.Conv2d(1024, 2048, kernel_size=(3, 3), padding=1)
+        self.conv6 = torch.nn.Conv2d(2048, 4096, kernel_size=(3, 3), padding=1)
+
+        self.relu = torch.nn.ReLU()
+        self.pool = torch.nn.MaxPool2d(kernel_size=(2, 2), stride=2)
+
+        # 只对 conv1, conv2, conv3, conv4 进行池化，确保最终特征图大小足够
+        self.adaptive_pool = torch.nn.AdaptiveAvgPool2d((1, 1))  # 让特征图最终变成 1x1
+
+        self.fc1 = torch.nn.Linear(4096 * 1 * 1, 4096)
+        self.fc2 = torch.nn.Linear(4096, 2048)
+        self.fc3 = torch.nn.Linear(2048, 1024)
+        self.fc4 = torch.nn.Linear(1024, out_channels)
+
         self.criterion = torch.nn.CrossEntropyLoss()
 
-        # Define layers of the model
-        self.conv1 = torch.nn.Conv2d(
-            in_channels=in_channels, out_channels=32, kernel_size=(5, 5), padding="same"
-        )
-        self.relu = torch.nn.ReLU()
-        self.pool1 = torch.nn.MaxPool2d(kernel_size=(2, 2), stride=2)
-        self.conv2 = torch.nn.Conv2d(
-            in_channels=32, out_channels=64, kernel_size=(5, 5), padding="same"
-        )
-        self.pool2 = torch.nn.MaxPool2d(kernel_size=(2, 2), stride=2)
-        self.l1 = torch.nn.Linear(7 * 7 * 64, 2048)
-        self.l2 = torch.nn.Linear(2048, out_channels)
-
     def forward(self, x):
-        """Forward pass of the model."""
-        # Reshape the input tensor
-        input_layer = x.view(-1, 1, 28, 28)
-        
-        # First convolutional layer
-        conv1 = self.relu(self.conv1(input_layer))
-        pool1 = self.pool1(conv1)
-        
-        # Second convolutional layer
-        conv2 = self.relu(self.conv2(pool1))
-        pool2 = self.pool2(conv2)
-        
-        # Flatten the tensor
-        pool2_flat = pool2.reshape(-1, 7 * 7 * 64)
-        
-        # Fully connected layers
-        dense = self.relu(self.l1(pool2_flat))
-        logits = self.l2(dense)
-        
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = self.pool(self.relu(self.conv3(x)))
+        x = self.pool(self.relu(self.conv4(x)))
+        x = self.relu(self.conv5(x))  # 不池化
+        x = self.relu(self.conv6(x))  # 不池化
+        x = self.adaptive_pool(x)  # 保证输出 1x1
+        x = x.view(-1, 4096 * 1 * 1)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        logits = self.fc4(x)
         return logits
 
     def training_step(self, batch, batch_idx):
@@ -66,8 +54,10 @@ class MNISTModelCNN(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        return optimizer
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+# 使用较小的 batch size
+BATCH_SIZE = 8
+train_loader = DataLoader(TensorDataset(torch.rand(1000, 1, 28, 28), torch.randint(0, 10, (1000,))), batch_size=BATCH_SIZE, shuffle=True)
 
 
 
@@ -102,7 +92,7 @@ def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=29997
     return shadow_train, shadow_test
 
 # Generate Attack Dataset
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
+def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=500):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
 
