@@ -19,7 +19,7 @@ class CIFAR10ModelCNN(LightningModule):
         self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
         self.fc2 = torch.nn.Linear(512, out_channels)
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.001)
+        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.0001)
 
     def forward(self, x):
         x = self.pool(torch.relu(self.conv1(x)))
@@ -41,7 +41,7 @@ class CIFAR10ModelCNN(LightningModule):
 
 # Custom FedProx Optimizer
 class FedProxOptimizer(torch.optim.Adam):
-    def __init__(self, params, lr, mu=0.001):
+    def __init__(self, params, lr, mu=0.0001):
         super().__init__(params, lr=lr)
         self.mu = mu
         self.global_params = None
@@ -103,7 +103,7 @@ num_participants = 4
 train_size = 25000 // num_participants
 test_size = 5000 // num_participants
 num_rounds = 80
-epochs_per_round = 10
+epochs_per_round = 5
 
 participant_loaders = []
 for i in range(num_participants):
@@ -141,7 +141,7 @@ for round in range(num_rounds):
         print(f"Training participant {i+1} for {epochs_per_round} epochs")
 
         # **前 20 轮使用 FedAvg，不使用 FedProx**
-        if round >= 20:
+        if round >= 60:
             models[i].configure_optimizers().set_global_params(global_state_dict)  # 从第 11 轮开始应用 FedProx
 
         models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)

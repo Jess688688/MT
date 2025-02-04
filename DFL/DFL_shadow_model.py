@@ -19,7 +19,7 @@ class CIFAR10ModelCNN(LightningModule):
         self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
         self.fc2 = torch.nn.Linear(512, out_channels)
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.01, optimizer_type="adam")
+        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.0001)
 
 
     def forward(self, x):
@@ -41,7 +41,7 @@ class CIFAR10ModelCNN(LightningModule):
         return self.optimizer
 
 class FedProxOptimizer(torch.optim.Adam):
-    def __init__(self, params, lr, mu=0.01):
+    def __init__(self, params, lr, mu=0.0001):
         super().__init__(params, lr=lr)
         self.mu = mu
         self.global_params = None
@@ -113,11 +113,11 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_models = 2
+num_models = 1
 num_participants = 4
 train_size = (25000 // num_models) // num_participants
 test_size = (5000 // num_models) // num_participants
-num_rounds = 60
+num_rounds = 80
 epochs_per_round = 5
 
 all_participant_loaders = []
@@ -138,25 +138,39 @@ for model_idx in range(num_models):
         participant_loaders.append((local_train_loader, local_test_loader))
     all_participant_loaders.append(participant_loaders)
 
+
+
 # Train Local Models
 models_list = []
 for model_idx in range(num_models):
     models = [CIFAR10ModelCNN().to(torch.device("cuda" if torch.cuda.is_available() else "cpu")) for _ in range(num_participants)]
     global_state_dict = models[0].state_dict()
+
     for round in range(num_rounds):
         print(f"Model {model_idx+1} - Round {round+1}/{num_rounds}")
         local_updates = []
+
         for i, (local_train_loader, _) in enumerate(all_participant_loaders[model_idx]):
             print(f"Training participant {i+1} for {epochs_per_round} epochs")
-            models[i].configure_optimizers().set_global_params(global_state_dict)
+
+            # **前 40 轮使用 FedAvg，不使用 FedProx**
+            if round >= 60:
+                models[i].configure_optimizers().set_global_params(global_state_dict)  # 从第 11 轮开始应用 FedProx
+
             models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)
             local_updates.append(models[i].state_dict())
-        
+
+        # **执行 FedAvg 计算全局模型**
         global_state_dict = {key: torch.mean(torch.stack([local_updates[i][key] for i in range(num_participants)]), dim=0) for key in local_updates[0]}
-        
+
+        # **更新所有参与者的模型**
         for model in models:
             model.load_state_dict(global_state_dict)
+
     models_list.append(models)
+
+
+
 
 # Compute final predictions and merge results
 final_train_predictions, final_train_labels = [], []
