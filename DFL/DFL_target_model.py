@@ -120,6 +120,7 @@ for i in range(num_participants):
 
     participant_loaders.append((local_train_loader, local_test_loader))
 
+# Train Local Models
 def train_local_model(model, train_loader, device, max_epochs):
     trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
     trainer.fit(model, train_loader)
@@ -140,5 +141,19 @@ for round in range(num_rounds):
     for model in models:
         model.load_state_dict(global_state_dict)
 
-torch.save(global_state_dict, "final_global_model.pt")
-print("Final global model saved.")
+final_train_predictions, final_train_labels = [], []
+final_test_predictions, final_test_labels = [], []
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+for i, (local_train_loader, local_test_loader) in enumerate(participant_loaders):
+    models[i] = models[i].to(device)
+    train_results = compute_predictions(models[i], local_train_loader, device)
+    test_results = compute_predictions(models[i], local_test_loader, device)
+    final_train_predictions.append(train_results[0])
+    final_train_labels.append(train_results[1])
+    final_test_predictions.append(test_results[0])
+    final_test_labels.append(test_results[1])
+
+torch.save((torch.cat(final_train_predictions, dim=0), torch.cat(final_train_labels, dim=0)), "train_results.pt")
+torch.save((torch.cat(final_test_predictions, dim=0), torch.cat(final_test_labels, dim=0)), "test_results.pt")
+print("Final training and testing results saved.")
