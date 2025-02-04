@@ -19,6 +19,8 @@ class CIFAR10ModelCNN(LightningModule):
         self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
         self.fc2 = torch.nn.Linear(512, out_channels)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.01, optimizer_type="adam")
+
 
     def forward(self, x):
         x = self.pool(torch.relu(self.conv1(x)))
@@ -36,7 +38,28 @@ class CIFAR10ModelCNN(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        return self.optimizer
+
+class FedProxOptimizer(torch.optim.Adam):
+    def __init__(self, params, lr, mu=0.01):
+        super().__init__(params, lr=lr)
+        self.mu = mu
+        self.global_params = None
+    def set_global_params(self, global_params):
+        self.global_params = {k: v.clone().detach() for k, v in global_params.items()}
+    def step(self, closure=None):
+        loss = super().step(closure)
+        if self.global_params is None:
+            return loss
+        with torch.no_grad():
+            for group in self.param_groups:
+                for p in group["params"]:
+                    if p in self.global_params:
+                        p.data -= self.mu * (p.data - self.global_params[p])
+        return loss
+
+
+
 
 # Compute Predictions
 def compute_predictions(model, dataloader, device):
@@ -90,7 +113,7 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_models = 1
+num_models = 2
 num_participants = 4
 train_size = (25000 // num_models) // num_participants
 test_size = (5000 // num_models) // num_participants
@@ -119,11 +142,13 @@ for model_idx in range(num_models):
 models_list = []
 for model_idx in range(num_models):
     models = [CIFAR10ModelCNN().to(torch.device("cuda" if torch.cuda.is_available() else "cpu")) for _ in range(num_participants)]
+    global_state_dict = models[0].state_dict()
     for round in range(num_rounds):
         print(f"Model {model_idx+1} - Round {round+1}/{num_rounds}")
         local_updates = []
         for i, (local_train_loader, _) in enumerate(all_participant_loaders[model_idx]):
             print(f"Training participant {i+1} for {epochs_per_round} epochs")
+            models[i].configure_optimizers().set_global_params(global_state_dict)
             models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)
             local_updates.append(models[i].state_dict())
         
