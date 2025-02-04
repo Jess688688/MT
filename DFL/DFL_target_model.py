@@ -19,6 +19,7 @@ class CIFAR10ModelCNN(LightningModule):
         self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
         self.fc2 = torch.nn.Linear(512, out_channels)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = FedProxOptimizer(self.parameters(), lr=learning_rate, mu=0.01)
 
     def forward(self, x):
         x = self.pool(torch.relu(self.conv1(x)))
@@ -36,13 +37,33 @@ class CIFAR10ModelCNN(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        return self.optimizer
+
+# Custom FedProx Optimizer
+class FedProxOptimizer(torch.optim.Adam):
+    def __init__(self, params, lr, mu=0.01):
+        super().__init__(params, lr=lr)
+        self.mu = mu
+        self.global_params = None
+
+    def set_global_params(self, global_params):
+        self.global_params = {k: v.clone().detach() for k, v in global_params.items()}
+
+    def step(self, closure=None):
+        loss = super().step(closure)
+        if self.global_params is None:
+            return loss
+        with torch.no_grad():
+            for group in self.param_groups:
+                for p in group["params"]:
+                    if p in self.global_params:
+                        p.data -= self.mu * (p.data - self.global_params[p])
+        return loss
 
 # Compute Predictions
 def compute_predictions(model, dataloader, device):
     model.eval()
     predictions, labels = [], []
-
     with torch.no_grad():
         for inputs, label in dataloader:
             inputs, label = inputs.to(device), label.to(device)
@@ -50,7 +71,6 @@ def compute_predictions(model, dataloader, device):
             probs = torch.softmax(logits, dim=1)
             predictions.append(probs)
             labels.append(label)
-
     predictions = torch.cat(predictions, dim=0)
     labels = torch.cat(labels, dim=0)
     return predictions, labels
@@ -63,11 +83,9 @@ def load_partitioned_cifar10(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-# Replace CIFAR-10 with partitioned dataset
 partition_file = 'cifar10_partition1.pkl'
 x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-# Convert to PyTorch Dataset
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
@@ -75,14 +93,12 @@ transform = transforms.Compose([
 
 x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255
 y_train = torch.tensor(y_train).squeeze().long()
-
 x_test = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255
 y_test = torch.tensor(y_test).squeeze().long()
 
 train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
-# Decentralized Federated Learning Configuration
 num_participants = 4
 train_size = 25000 // num_participants
 test_size = 5000 // num_participants
@@ -104,54 +120,25 @@ for i in range(num_participants):
 
     participant_loaders.append((local_train_loader, local_test_loader))
 
-# Train Local Models
 def train_local_model(model, train_loader, device, max_epochs):
     trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
     trainer.fit(model, train_loader)
     return model
 
-# Federated Learning Training Loop
 models = [CIFAR10ModelCNN().to(torch.device("cuda" if torch.cuda.is_available() else "cpu")) for _ in range(num_participants)]
 
+global_state_dict = models[0].state_dict()
 for round in range(num_rounds):
     print(f"Round {round+1}/{num_rounds}")
     local_updates = []
     for i, (local_train_loader, _) in enumerate(participant_loaders):
         print(f"Training participant {i+1} for {epochs_per_round} epochs")
+        models[i].configure_optimizers().set_global_params(global_state_dict)
         models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)
         local_updates.append(models[i].state_dict())
-    
-    # Model Aggregation (Averaging)
     global_state_dict = {key: torch.mean(torch.stack([local_updates[i][key] for i in range(num_participants)]), dim=0) for key in local_updates[0]}
-    
-    # Update all participant models with the aggregated model
     for model in models:
         model.load_state_dict(global_state_dict)
 
-# Compute final predictions for all participants
-final_train_predictions, final_train_labels = [], []
-final_test_predictions, final_test_labels = [], []
-
-# 确保模型和输入数据在同一设备上
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-for i, (local_train_loader, local_test_loader) in enumerate(participant_loaders):
-    models[i] = models[i].to(device)  # ✅ 强制将模型移动到正确设备
-
-    train_results = compute_predictions(models[i], local_train_loader, device)
-    test_results = compute_predictions(models[i], local_test_loader, device)
-    
-    final_train_predictions.append(train_results[0])
-    final_train_labels.append(train_results[1])
-    final_test_predictions.append(test_results[0])
-    final_test_labels.append(test_results[1])
-
-
-# Merge all participant results
-train_results = (torch.cat(final_train_predictions, dim=0), torch.cat(final_train_labels, dim=0))
-test_results = (torch.cat(final_test_predictions, dim=0), torch.cat(final_test_labels, dim=0))
-
-# Save final aggregated results
-torch.save(train_results, "train_results.pt")
-torch.save(test_results, "test_results.pt")
-print("Final training and testing results saved.")
+torch.save(global_state_dict, "final_global_model.pt")
+print("Final global model saved.")
