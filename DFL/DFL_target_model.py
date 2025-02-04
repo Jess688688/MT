@@ -86,8 +86,8 @@ test_dataset = TensorDataset(x_test, y_test)
 num_participants = 4
 train_size = 25000 // num_participants
 test_size = 5000 // num_participants
-num_rounds = 5
-epochs_per_round = 10
+num_rounds = 60
+epochs_per_round = 5
 
 participant_loaders = []
 for i in range(num_participants):

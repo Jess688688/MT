@@ -90,12 +90,12 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_models = 2
+num_models = 1
 num_participants = 4
 train_size = (25000 // num_models) // num_participants
 test_size = (5000 // num_models) // num_participants
-num_rounds = 5
-epochs_per_round = 10
+num_rounds = 60
+epochs_per_round = 5
 
 all_participant_loaders = []
 for model_idx in range(num_models):
