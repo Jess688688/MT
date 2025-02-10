@@ -9,40 +9,37 @@ import os
 import pickle
 import torchmetrics
 
-
 class CIFAR100Model(LightningModule):
-    def __init__(self, num_classes=100, learning_rate=0.0001):
+    def __init__(self, num_classes=100):
         super(CIFAR100Model, self).__init__()
-        self.learning_rate = learning_rate
-        
-        # Load Pretrained ResNet18
-        self.model = models.resnet18(pretrained=True)
-        
-        # 解冻所有层进行 fine-tuning
-        for param in self.model.parameters():
-            param.requires_grad = True
-        
-        # Modify the last fully connected layer to match CIFAR-100 classes
-        in_features = self.model.fc.in_features
-        self.model.fc = nn.Sequential(
-            nn.Dropout(0.5),  # 添加 Dropout 防止过拟合
-            nn.Linear(in_features, num_classes)
-        )
-        
-        
-        self.loss_fn = nn.CrossEntropyLoss()
-    
+        self.model = models.vgg16(pretrained=True)
+        self.model.classifier[6] = nn.Linear(4096, num_classes)  # 修改最后一层为 CIFAR-100 分类任务
+        self.criterion = nn.CrossEntropyLoss()
+        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
+
     def forward(self, x):
         return self.model(x)
-    
+
     def training_step(self, batch, batch_idx):
         inputs, labels = batch
         outputs = self(inputs)
-        loss = self.loss_fn(outputs, labels)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_acc", acc, prog_bar=True)
         return loss
-    
+
+    def validation_step(self, batch, batch_idx):
+        inputs, labels = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_acc", acc, prog_bar=True)
+        return loss
+
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = optim.Adam(self.parameters(), lr=0.0001)
         return optimizer
 
 # Function to compute predictions
@@ -63,8 +60,6 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-# The rest of the script remains unchanged
-
 # Generate Shadow Datasets
 def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=25000, test_size=5000):
     shadow_train, shadow_test = [], []
@@ -79,7 +74,7 @@ def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=25000
     return shadow_train, shadow_test
 
 # Generate Attack Dataset
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=10):
+def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
     
