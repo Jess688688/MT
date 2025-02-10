@@ -13,7 +13,12 @@ class CIFAR100Model(LightningModule):
     def __init__(self, num_classes=100):
         super(CIFAR100Model, self).__init__()
         self.model = models.vgg16(pretrained=True)
-        self.model.classifier[6] = nn.Linear(4096, num_classes)  # 修改最后一层为 CIFAR-100 分类任务
+        
+        # 训练整个模型，不冻结卷积层
+        self.model.classifier[2] = nn.Dropout(0.5)
+        self.model.classifier[5] = nn.Dropout(0.5)
+        self.model.classifier[6] = nn.Linear(4096, num_classes)
+        
         self.criterion = nn.CrossEntropyLoss()
         self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
 
@@ -39,8 +44,9 @@ class CIFAR100Model(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=0.0001)
-        return optimizer
+        optimizer = optim.Adam(self.parameters(), lr=0.0001, weight_decay=5e-4)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        return [optimizer], [scheduler]
 
 # Function to compute predictions
 def _compute_predictions(model, dataloader, device):
@@ -113,7 +119,7 @@ x_train, y_train, x_test, y_test = load_partitioned_cifar100(partition_file)
 # Convert to PyTorch Dataset
 transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255  # Convert to channels-first format
