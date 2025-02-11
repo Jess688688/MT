@@ -1,99 +1,59 @@
 import random
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import DataLoader, Subset, TensorDataset
-from torchvision import transforms
+from torchvision import transforms, models
 from pytorch_lightning import Trainer, LightningModule
-import pickle
 import os
+import pickle
+import torchmetrics
 
-
-class CIFAR100ModelCNN(LightningModule):
-    def __init__(
-            self,
-            in_channels=3,
-            out_channels=100,  # 修改 out_channels=100 以匹配 CIFAR-100
-            learning_rate=1e-3
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-
-        self.conv1 = torch.nn.Sequential(
-            torch.nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(64),
-            torch.nn.ReLU(inplace=True)
-        )
-        self.conv2 = torch.nn.Sequential(
-            torch.nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.MaxPool2d(2)
-        )
-
-        self.res1 = torch.nn.Sequential(
-            torch.nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(128),
-            torch.nn.ReLU(inplace=True)
-        )
-
-        self.conv3 = torch.nn.Sequential(
-            torch.nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(256),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.MaxPool2d(2)
-        )
-        self.conv4 = torch.nn.Sequential(
-            torch.nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.MaxPool2d(2)
-        )
-
-        self.res2 = torch.nn.Sequential(
-            torch.nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            torch.nn.BatchNorm2d(512),
-            torch.nn.ReLU(inplace=True)
-        )
-
-        self.classifier = torch.nn.Sequential(
-            torch.nn.MaxPool2d(4),
-            torch.nn.Flatten(),
-            torch.nn.Linear(512, out_channels)
-        )
-
-        self.criterion = torch.nn.CrossEntropyLoss()
+class CIFAR100Model(LightningModule):
+    def __init__(self, num_classes=100):
+        super(CIFAR100Model, self).__init__()
+        self.model = models.vgg16(pretrained=True)
+        
+        # 训练整个模型，不冻结卷积层
+        self.model.classifier[2] = nn.Dropout(0.5)
+        self.model.classifier[5] = nn.Dropout(0.5)
+        self.model.classifier[6] = nn.Linear(4096, num_classes)
+        
+        self.criterion = nn.CrossEntropyLoss()
+        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.res1(x) + x
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.res2(x) + x
-        x = self.classifier(x)
-        return x
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        images, labels = batch
-        logits = self.forward(images)
-        loss = self.criterion(logits, labels)
+        inputs, labels = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_acc", acc, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        inputs, labels = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_acc", acc, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-
-
+        optimizer = optim.Adam(self.parameters(), lr=0.0001, weight_decay=5e-4)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        return [optimizer], [scheduler]
 
 # Function to compute predictions
 def _compute_predictions(model, dataloader, device):
     model.eval()
+    model.to(device)
     predictions, labels = [], []
-
+    
     with torch.no_grad():
         for inputs, label in dataloader:
             inputs, label = inputs.to(device), label.to(device)
@@ -101,50 +61,51 @@ def _compute_predictions(model, dataloader, device):
             probs = torch.softmax(logits, dim=1)
             predictions.append(probs)
             labels.append(label)
-
+    
     predictions = torch.cat(predictions, dim=0)
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
+# The rest of the script remains unchanged
+
 
 # Function to generate shadow datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=5000, test_size=1000):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=2500, test_size=500):
     shadow_train, shadow_test = [], []
-
+    
     for _ in range(num_shadow):
         train_indices = random.sample(range(len(train_data)), train_size)
         test_indices = random.sample(range(len(test_data)), test_size)
 
         shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True))
         shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False))
-
+    
     return shadow_train, shadow_test
 
-
 # Main attack dataset generation
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=20):
+def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
-
+    
     for i in range(num_shadow):
-        shadow_model = CIFAR100ModelCNN()
-        shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
+        shadow_model = CIFAR100Model()
+        shadow_model.to(device)
+        
+        shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices=1, logger=True, enable_checkpointing=False)
         shadow_trainer.fit(shadow_model, shadow_train[i])
-
+        
         tr_pre, tr_label = _compute_predictions(shadow_model.to(device), shadow_train[i], device)
         te_pre, te_label = _compute_predictions(shadow_model.to(device), shadow_test[i], device)
-
+        
         s_tr_pre.append(tr_pre)
         s_tr_label.append(tr_label)
-
         s_te_pre.append(te_pre)
         s_te_label.append(te_label)
-
+    
     shadow_train_res = (torch.cat(s_tr_pre, dim=0), torch.cat(s_tr_label, dim=0))
     shadow_test_res = (torch.cat(s_te_pre, dim=0), torch.cat(s_te_label, dim=0))
-
+    
     return shadow_train_res, shadow_test_res
-
 
 # Load partitioned CIFAR-100 dataset
 def load_partitioned_cifar100(file_path):
@@ -154,7 +115,6 @@ def load_partitioned_cifar100(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-
 # Replace CIFAR-10 with CIFAR-100 dataset file
 partition_file = 'cifar100_partition2.pkl'
 x_train, y_train, x_test, y_test = load_partitioned_cifar100(partition_file)
@@ -162,7 +122,7 @@ x_train, y_train, x_test, y_test = load_partitioned_cifar100(partition_file)
 # Convert to PyTorch Dataset
 transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 # Convert to Tensor and normalize
@@ -181,7 +141,7 @@ shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, 
 
 # Initialize the main model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR100ModelCNN().to(device)
+model = CIFAR100Model().to(device)
 
 # Generate attack dataset
 shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
