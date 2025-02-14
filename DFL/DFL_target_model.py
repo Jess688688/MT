@@ -1,44 +1,50 @@
 import random
 import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.models as models
+import torchmetrics
 from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
 import os
 import pickle
 
-# CIFAR-10 Model Definition
-class CIFAR10ModelCNN(LightningModule):
-    def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
-        super().__init__()
-        self.save_hyperparameters()
+# ResNet18 Model Definition
+class CIFAR10Model(LightningModule):
+    def __init__(self, num_classes=10):
+        super(CIFAR10Model, self).__init__()
+        self.model = models.vgg16(pretrained=True)
+        
+        # 只训练分类层，冻结特征提取部分，降低计算需求
+        # for param in self.model.features.parameters():
+        #     param.requires_grad = False
 
-        self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
-        self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
-        self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
-        self.pool = torch.nn.MaxPool2d(2, 2)
-        self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
-        self.fc2 = torch.nn.Linear(512, out_channels)
-        self.criterion = torch.nn.CrossEntropyLoss()
+        self.model.classifier[2] = nn.Dropout(0.5)
+        self.model.classifier[5] = nn.Dropout(0.5)
+        self.model.classifier[6] = nn.Linear(4096, num_classes)
+        
+        self.criterion = nn.CrossEntropyLoss()
+        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
 
     def forward(self, x):
-        x = self.pool(torch.relu(self.conv1(x)))
-        x = self.pool(torch.relu(self.conv2(x)))
-        x = self.pool(torch.relu(self.conv3(x)))
-        x = x.view(-1, 64 * 4 * 4)
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self.forward(x)
-        loss = self.criterion(logits, y)
+        inputs, labels = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_acc", acc, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = optim.Adam(self.parameters(), lr=0.0001, weight_decay=5e-4)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        return [optimizer], [scheduler]
 
-# Compute Predictions
+# Compute Predictions and Save to File
 def compute_predictions(model, dataloader, device):
     model.eval()
     predictions, labels = [], []
@@ -47,9 +53,9 @@ def compute_predictions(model, dataloader, device):
         for inputs, label in dataloader:
             inputs, label = inputs.to(device), label.to(device)
             logits = model(inputs)
-            probs = torch.softmax(logits, dim=1)
-            predictions.append(probs)
-            labels.append(label)
+            probs = torch.softmax(logits, dim=1)  # 计算 softmax 概率
+            predictions.append(probs.cpu())  # 确保存到 CPU，避免显存溢出
+            labels.append(label.cpu())
 
     predictions = torch.cat(predictions, dim=0)
     labels = torch.cat(labels, dim=0)
@@ -83,11 +89,11 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_participants = 4
+num_participants = 10
 train_size = 25000 // num_participants
 test_size = 5000 // num_participants
-num_rounds = 5
-epochs_per_round = 10
+num_rounds = 20
+epochs_per_round = 3
 
 participant_loaders = []
 for i in range(num_participants):
@@ -99,8 +105,8 @@ for i in range(num_participants):
     train_indices = list(range(train_start, train_end))
     test_indices = list(range(test_start, test_end))
 
-    local_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=32, shuffle=True)
-    local_test_loader = DataLoader(Subset(test_dataset, test_indices), batch_size=32, shuffle=False)
+    local_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=16, shuffle=True)  # 降低 batch size
+    local_test_loader = DataLoader(Subset(test_dataset, test_indices), batch_size=16, shuffle=False)
 
     participant_loaders.append((local_train_loader, local_test_loader))
 
@@ -111,51 +117,70 @@ def train_local_model(model, train_loader, device, max_epochs):
     return model
 
 # Federated Learning Training Loop
-models = [CIFAR10ModelCNN().to(torch.device("cuda" if torch.cuda.is_available() else "cpu")) for _ in range(num_participants)]
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 for round in range(num_rounds):
     print(f"Round {round+1}/{num_rounds}")
     local_updates = []
+    
     for i, (local_train_loader, _) in enumerate(participant_loaders):
         print(f"Training participant {i+1} for {epochs_per_round} epochs")
         
+        model = CIFAR10Model().to(device)  # 只加载当前参与者的模型
+        
         if round > 0:  # 从第二轮开始，使用上轮的 global_state_dict
             model.load_state_dict(global_state_dict)
-        
-        models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)
-        local_updates.append(models[i].state_dict())
-    
-    # Model Aggregation (Averaging)
-    global_state_dict = {key: torch.mean(torch.stack([local_updates[i][key] for i in range(num_participants)]), dim=0) for key in local_updates[0]}
-    
-    # Update all participant models with the aggregated model
-    for model in models:
-        model.load_state_dict(global_state_dict)
 
-# Compute final predictions for all participants
+        model = train_local_model(model, local_train_loader, device, epochs_per_round)
+        local_updates.append(model.state_dict())
+        
+        del model  # 释放模型显存
+        torch.cuda.empty_cache()
+
+    # Model Aggregation (Averaging)
+    global_state_dict = {
+        key: torch.mean(torch.stack([local_updates[i][key].float() for i in range(num_participants)]), dim=0)
+        for key in local_updates[0]
+    }
+
+    # 释放内存
+    del local_updates
+    torch.cuda.empty_cache()
+
+# 存储最终训练和测试结果
 final_train_predictions, final_train_labels = [], []
 final_test_predictions, final_test_labels = [], []
 
-# 确保模型和输入数据在同一设备上
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# 遍历所有参与者，计算并合并预测结果
 for i, (local_train_loader, local_test_loader) in enumerate(participant_loaders):
-    models[i] = models[i].to(device)  # ✅ 强制将模型移动到正确设备
+    print(f"Computing predictions for participant {i+1}")
 
-    train_results = compute_predictions(models[i], local_train_loader, device)
-    test_results = compute_predictions(models[i], local_test_loader, device)
-    
+    model = CIFAR10Model().to(device)  # 重新创建模型
+    model.load_state_dict(global_state_dict)  # 加载最终的全局模型
+
+    # 计算训练集和测试集的预测结果
+    train_results = compute_predictions(model, local_train_loader, device)
+    test_results = compute_predictions(model, local_test_loader, device)
+
+    # 直接合并，不存单个 .pt 文件
     final_train_predictions.append(train_results[0])
     final_train_labels.append(train_results[1])
     final_test_predictions.append(test_results[0])
     final_test_labels.append(test_results[1])
 
+    del model  # 释放模型显存
+    torch.cuda.empty_cache()
 
-# Merge all participant results
+# 合并所有参与者的训练和测试结果
 train_results = (torch.cat(final_train_predictions, dim=0), torch.cat(final_train_labels, dim=0))
 test_results = (torch.cat(final_test_predictions, dim=0), torch.cat(final_test_labels, dim=0))
 
-# Save final aggregated results
+# 只存储最终合并的 .pt 文件
 torch.save(train_results, "train_results.pt")
 torch.save(test_results, "test_results.pt")
-print("Final training and testing results saved.")
+
+print("最终合并的训练结果已保存为 train_results.pt")
+print("最终合并的测试结果已保存为 test_results.pt")
+
+
+

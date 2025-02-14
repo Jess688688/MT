@@ -56,8 +56,13 @@ class AttackModel:
         return accuracy
 
     def MIA_shadow_model_attack(self):
-        shadow_train_res = torch.load("s_train_results.pt")
-        shadow_test_res = torch.load("s_test_results.pt")
+        
+        # (1) 确保 `device` 设定
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # (2) 在 `torch.load()` 里加上 `map_location=device`
+        shadow_train_res = torch.load("s_train_results.pt", map_location=device)
+        shadow_test_res = torch.load("s_test_results.pt", map_location=device)
 
         shadow_train_pre = shadow_train_res[0]
         shadow_test_pre = shadow_test_res[0]
@@ -91,8 +96,9 @@ class AttackModel:
                 predicted_label = torch.cat(predicted_label, dim=0)
             return predicted_label
 
-        in_eval_pre = torch.load("train_results.pt")
-        out_eval_pre = torch.load("test_results.pt")
+        # (3) 确保 `train_results.pt` 和 `test_results.pt` 也加载到 `device`
+        in_eval_pre = torch.load("train_results.pt", map_location=device)
+        out_eval_pre = torch.load("test_results.pt", map_location=device)
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
         out_predictions = in_out_samples_check(attack_model.to(self.device), out_eval_pre)
@@ -102,11 +108,11 @@ class AttackModel:
 
         precision, recall, f1 = self.evaluate_metrics(true_positives, false_positives, in_predictions)
 
-        mnist_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
-        mnist_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
+        train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
+        test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
-        print(f"MNIST Training Accuracy: {mnist_train_accuracy:.2f}%")
-        print(f"MNIST Testing Accuracy: {mnist_test_accuracy:.2f}%")
+        print(f"Training Accuracy: {train_accuracy:.2f}%")
+        print(f"Testing Accuracy: {test_accuracy:.2f}%")
 
         return precision, recall, f1
 

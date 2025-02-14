@@ -4,11 +4,14 @@ import torch
 
 class ClassMetricBasedAttack:
     def __init__(self, shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path):
-        # Load data from .pt files
-        self.shadow_train_res = torch.load(shadow_train_res_path)
-        self.shadow_test_res = torch.load(shadow_test_res_path)
-        self.in_eval_pre = torch.load(in_eval_pre_path)
-        self.out_eval_pre = torch.load(out_eval_pre_path)
+        # (1) 确保 `device` 设定
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # (2) 确保 `.pt` 文件加载到正确的设备
+        self.shadow_train_res = torch.load(shadow_train_res_path, map_location=self.device)
+        self.shadow_test_res = torch.load(shadow_test_res_path, map_location=self.device)
+        self.in_eval_pre = torch.load(in_eval_pre_path, map_location=self.device)
+        self.out_eval_pre = torch.load(out_eval_pre_path, map_location=self.device)
 
         # Extract number of classes
         self.num_classes = 10  # MNIST has 10 classes (0-9)
@@ -21,15 +24,15 @@ class ClassMetricBasedAttack:
         self.t_in_outputs, self.t_in_labels = self.in_eval_pre
         self.t_out_outputs, self.t_out_labels = self.out_eval_pre
 
-        # Convert to NumPy arrays
-        self.s_in_outputs = self.s_in_outputs.cpu().detach().numpy()
-        self.s_in_labels = self.s_in_labels.cpu().detach().numpy()
-        self.s_out_outputs = self.s_out_outputs.cpu().detach().numpy()
-        self.s_out_labels = self.s_out_labels.cpu().detach().numpy()
-        self.t_in_outputs = self.t_in_outputs.cpu().detach().numpy()
-        self.t_in_labels = self.t_in_labels.cpu().detach().numpy()
-        self.t_out_outputs = self.t_out_outputs.cpu().detach().numpy()
-        self.t_out_labels = self.t_out_labels.cpu().detach().numpy()
+        # (3) 确保数据在 `device` 上，并转换为 NumPy
+        self.s_in_outputs = self.s_in_outputs.to(self.device).cpu().detach().numpy()
+        self.s_in_labels = self.s_in_labels.to(self.device).cpu().detach().numpy()
+        self.s_out_outputs = self.s_out_outputs.to(self.device).cpu().detach().numpy()
+        self.s_out_labels = self.s_out_labels.to(self.device).cpu().detach().numpy()
+        self.t_in_outputs = self.t_in_outputs.to(self.device).cpu().detach().numpy()
+        self.t_in_labels = self.t_in_labels.to(self.device).cpu().detach().numpy()
+        self.t_out_outputs = self.t_out_outputs.to(self.device).cpu().detach().numpy()
+        self.t_out_labels = self.t_out_labels.to(self.device).cpu().detach().numpy()
 
         # Calculate confidence
         self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] for i in range(len(self.s_in_labels))])
