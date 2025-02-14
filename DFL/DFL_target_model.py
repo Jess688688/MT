@@ -118,6 +118,10 @@ for round in range(num_rounds):
     local_updates = []
     for i, (local_train_loader, _) in enumerate(participant_loaders):
         print(f"Training participant {i+1} for {epochs_per_round} epochs")
+        
+        if round > 0:  # 从第二轮开始，使用上轮的 global_state_dict
+            model.load_state_dict(global_state_dict)
+        
         models[i] = train_local_model(models[i], local_train_loader, torch.device("cuda" if torch.cuda.is_available() else "cpu"), epochs_per_round)
         local_updates.append(models[i].state_dict())
     
