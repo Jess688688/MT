@@ -112,8 +112,17 @@ for round in range(num_rounds):
         model = train_local_model(model, local_train_loader, device, epochs_per_round)
         local_updates.append(model.state_dict())
 
+        # 训练完当前参与者后，彻底清理显存
+        if hasattr(model, 'criterion'):
+            del model.criterion
+        if hasattr(model, 'accuracy'):
+            del model.accuracy
+
         del model
         torch.cuda.empty_cache()
+
+        import gc
+        gc.collect()
 
     global_state_dict = {
         key: torch.mean(torch.stack([local_updates[i][key].float() for i in range(num_participants)]), dim=0)

@@ -66,9 +66,26 @@ test_dataset = TensorDataset(x_test, y_test)
 train_loaders = [DataLoader(Subset(train_dataset, indices), batch_size=16, shuffle=False) for indices in train_indices_list]
 test_loaders = [DataLoader(Subset(test_dataset, indices), batch_size=16, shuffle=False) for indices in test_indices_list]
 
-train_results = compute_predictions(model, train_loaders[0], device)
-test_results = compute_predictions(model, test_loaders[0], device)
+# 计算所有参与者的预测结果
+final_train_predictions, final_train_labels = [], []
+final_test_predictions, final_test_labels = [], []
 
+for i, (train_loader, test_loader) in enumerate(zip(train_loaders, test_loaders)):
+    print(f"Computing predictions for participant {i+1}")
+
+    train_results = compute_predictions(model, train_loader, device)
+    test_results = compute_predictions(model, test_loader, device)
+
+    final_train_predictions.append(train_results[0])
+    final_train_labels.append(train_results[1])
+    final_test_predictions.append(test_results[0])
+    final_test_labels.append(test_results[1])
+
+# 合并所有参与者的预测结果
+train_results = (torch.cat(final_train_predictions, dim=0), torch.cat(final_train_labels, dim=0))
+test_results = (torch.cat(final_test_predictions, dim=0), torch.cat(final_test_labels, dim=0))
+
+# 保存最终的预测结果
 torch.save(train_results, "train_results.pt")
 torch.save(test_results, "test_results.pt")
 
