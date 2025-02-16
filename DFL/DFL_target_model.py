@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
 import pickle
+import numpy as np
 
 # 定义 VGG16 模型
 class CIFAR10Model(LightningModule):
@@ -66,28 +67,44 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # 分割数据集
-num_participants = 10
-train_size = 25000 // num_participants
-test_size = 5000 // num_participants
-num_rounds = 20
-epochs_per_round = 3
+num_participants = 2
+num_rounds = 2
+epochs_per_round = 1
+
+# 每个类别的数据索引
+train_class_indices = {i: np.where(y_train == i)[0] for i in range(10)}
+test_class_indices = {i: np.where(y_test == i)[0] for i in range(10)}
 
 participant_loaders = []
 train_indices_list, test_indices_list = [], []
 
+# 分配数据给每个参与者
 for i in range(num_participants):
-    train_start, train_end = i * train_size, (i + 1) * train_size
-    test_start, test_end = i * test_size, (i + 1) * test_size
+    train_indices = []
+    test_indices = []
 
-    train_indices = list(range(train_start, train_end))
-    test_indices = list(range(test_start, test_end))
+    # 对每个类别的数据均匀划分
+    for class_id in range(10):
+        class_train_indices = train_class_indices[class_id]
+        class_test_indices = test_class_indices[class_id]
 
-    train_indices_list.append(train_indices)
-    test_indices_list.append(test_indices)
+        # 每个参与者分配每个类别的数据
+        class_train_split = len(class_train_indices) // num_participants
+        class_test_split = len(class_test_indices) // num_participants
 
+        # 将数据均匀分配给每个参与者
+        train_indices.extend(class_train_indices[i * class_train_split:(i + 1) * class_train_split])
+        test_indices.extend(class_test_indices[i * class_test_split:(i + 1) * class_test_split])
+
+    # 创建当前参与者的 DataLoader
     local_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=16, shuffle=True)
     local_test_loader = DataLoader(Subset(test_dataset, test_indices), batch_size=16, shuffle=False)
 
+    # 保存每个参与者的索引
+    train_indices_list.append(train_indices)
+    test_indices_list.append(test_indices)
+
+    # 添加到参与者加载器列表
     participant_loaders.append((local_train_loader, local_test_loader))
 
 # 训练本地模型

@@ -7,8 +7,8 @@ import torchmetrics
 from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
-import os
 import pickle
+import numpy as np
 
 # ResNet18 Model Definition
 class CIFAR10Model(LightningModule):
@@ -16,10 +16,6 @@ class CIFAR10Model(LightningModule):
         super(CIFAR10Model, self).__init__()
         self.model = models.vgg16(pretrained=True)
         
-        # 只训练分类层，冻结特征提取部分，降低计算需求
-        # for param in self.model.features.parameters():
-        #     param.requires_grad = False
-
         self.model.classifier[2] = nn.Dropout(0.5)
         self.model.classifier[5] = nn.Dropout(0.5)
         self.model.classifier[6] = nn.Linear(4096, num_classes)
@@ -89,26 +85,46 @@ train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_participants = 10
-train_size = 25000 // num_participants
-test_size = 5000 // num_participants
-num_rounds = 20
-epochs_per_round = 3
+num_participants = 2
+num_rounds = 2
+epochs_per_round = 1
+
+# Each participant gets an equal share of the data
+train_class_indices = {i: np.where(y_train == i)[0] for i in range(10)}
+test_class_indices = {i: np.where(y_test == i)[0] for i in range(10)}
+
+train_size_per_participant = len(x_train) // num_participants
+test_size_per_participant = len(x_test) // num_participants
 
 participant_loaders = []
+
+# Distribute data evenly among participants
 for i in range(num_participants):
-    train_start = i * train_size
-    train_end = train_start + train_size
-    test_start = i * test_size
-    test_end = test_start + test_size
+    # Initialize lists to hold the indices for each participant
+    train_indices = []
+    test_indices = []
 
-    train_indices = list(range(train_start, train_end))
-    test_indices = list(range(test_start, test_end))
+    # Split the data for each class evenly among participants
+    for class_id in range(10):
+        class_train_indices = train_class_indices[class_id]
+        class_test_indices = test_class_indices[class_id]
+        
+        # Determine how many samples from each class this participant gets
+        class_train_split = len(class_train_indices) // num_participants
+        class_test_split = len(class_test_indices) // num_participants
+        
+        # Assign the indices to the current participant
+        train_indices.extend(class_train_indices[i * class_train_split:(i + 1) * class_train_split])
+        test_indices.extend(class_test_indices[i * class_test_split:(i + 1) * class_test_split])
 
-    local_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=16, shuffle=True)  # 降低 batch size
+    # Create DataLoader for the current participant
+    local_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=16, shuffle=True)
     local_test_loader = DataLoader(Subset(test_dataset, test_indices), batch_size=16, shuffle=False)
 
     participant_loaders.append((local_train_loader, local_test_loader))
+
+print("数据集已均匀划分并为每个参与者创建 DataLoader。")
+
 
 # Train Local Models
 def train_local_model(model, train_loader, device, max_epochs):
@@ -140,9 +156,6 @@ for round in range(num_rounds):
             del model.criterion
         if hasattr(model, 'accuracy'):
             del model.accuracy
-        # 取消 `optimizers`，因为 `PyTorch Lightning` 不会自动存储 `optimizers`
-        # if hasattr(model, 'optimizers'):
-        #     del model.optimizers
 
         del model
         torch.cuda.empty_cache()
