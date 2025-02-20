@@ -11,7 +11,6 @@ import numpy as np
 from PIL import Image
 import imagehash
 
-# 定义 VGG16 模型
 class CIFAR10ModelCNN(LightningModule):
     def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
         super().__init__()
@@ -54,16 +53,34 @@ def load_partitioned_cifar10(file_path):
 partition_file = 'cifar10_partition1.pkl'
 x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-# 数据预处理
+def calculate_phash_decimal(image):
+    pil_image = Image.fromarray(image)
+    phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
+    return int(phash_hex, 16)  # Convert to decimal
+
+def generate_sorted_train_phashes(raw_images):
+    phashes = [calculate_phash_decimal(img) for img in raw_images]
+    sorted_phashes = np.sort(phashes)
+    np.save("sorted_train_phashes_decimal.npy", sorted_phashes)
+    print("Sorted pHash values saved to sorted_train_phashes_decimal.npy")
+    return sorted_phashes
+
+sorted_hashes = generate_sorted_train_phashes(x_train)
+
+# 定义 CIFAR-10 预处理变换（标准化）
+mean = (0.4914, 0.4822, 0.4465)
+std = (0.2471, 0.2435, 0.2616)
+
 transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
+    transforms.ToTensor(),  # 转换为张量，像素值范围从 [0,255] 变为 [0,1]
+    transforms.Normalize(mean, std)  # 进行标准化
 ])
 
-x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255  # Convert to channels-first format
+# 处理数据，应用标准化
+x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
 y_train = torch.tensor(y_train).squeeze().long()
 
-x_test = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255
+x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
 y_test = torch.tensor(y_test).squeeze().long()
 
 train_dataset = TensorDataset(x_train, y_train)
@@ -82,7 +99,7 @@ def generate_local_datasets(train_data, test_data, train_size=25000, test_size=5
 local_train_loader, local_test_loader, train_indices, test_indices = generate_local_datasets(train_dataset, test_dataset)
 
 # 训练模型 
-def train_local_model(model, train_loader, max_epochs=3):
+def train_local_model(model, train_loader, max_epochs=50):
     trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
     trainer.fit(model, train_loader)
     return model
@@ -91,7 +108,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CIFAR10ModelCNN().to(device)
 
 # 训练并保存模型
-trained_model = train_local_model(model, local_train_loader, max_epochs=3)
+trained_model = train_local_model(model, local_train_loader, max_epochs=50)
 
 # Save model and dataset indices
 torch.save(trained_model.state_dict(), "final_global_model.pth")
@@ -100,24 +117,3 @@ torch.save(test_indices, "test_loader.pth")
 
 print("Final global model saved as final_global_model.pth")
 print("Train and test dataset indices saved as train_loader.pth and test_loader.pth")
-
-def calculate_phash_decimal(image):
-    pil_image = Image.fromarray(image)
-    phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
-    return int(phash_hex, 16)  # Convert to decimal
-
-def generate_sorted_train_phashes(dataset):
-    phashes = []
-    for img, _ in dataset:
-        img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-        phash_decimal = calculate_phash_decimal(img_array)
-        phashes.append(phash_decimal)
-
-    sorted_phashes = np.sort(phashes)
-    np.save("sorted_train_phashes_decimal.npy", sorted_phashes)
-    print("Sorted pHash values saved to sorted_train_phashes_decimal.npy")
-    return sorted_phashes
-
-sorted_train_hashes = generate_sorted_train_phashes(train_dataset)
-
-

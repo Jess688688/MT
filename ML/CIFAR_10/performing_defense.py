@@ -8,6 +8,7 @@ import os
 import numpy as np
 from PIL import Image
 import imagehash
+from sklearn.decomposition import PCA
 
 # Load Model
 class CIFAR10ModelCNN(nn.Module):
@@ -29,50 +30,26 @@ class CIFAR10ModelCNN(nn.Module):
         x = self.fc2(x)
         return x
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def calculate_phash_decimal(image):
+    pil_image = Image.fromarray(image)
+    phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
+    return int(phash_hex, 16)  # Convert to decimal
 
-# Load trained model
-model = CIFAR10ModelCNN().to(device)
-model.load_state_dict(torch.load("final_global_model.pth", map_location=device))
-model.eval()
-print("Pre-trained model loaded. Preparing to compute predictions!")
-
-
-def apply_composite(img, label, pca_folder="PCA", alpha=0.7):
-    # Convert the input tensor to a numpy array
-    img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-
-    # Load PCA composite images
+def apply_composite(img, label, pca_folder="PCA", alpha=0.5):
+    img_array = np.array(img)
     pca_images = {}
     for class_id in range(10):
         pca_path = os.path.join(pca_folder, f"cifar10_{class_id}_pca_composite.png")
         pca_images[class_id] = np.array(Image.open(pca_path))
-
-    # Determine whether to use the same or a different class PCA image
-    if random.random() < 0.1:  # 10% chance for the same class
-        pca_image = pca_images[label]
-    else:  # other chance for a random other class
-        other_classes = [class_id for class_id in range(10) if class_id != label]
-        random_class = random.choice(other_classes)
-        pca_image = pca_images[random_class]
-
-    # Ensure PCA image matches the size of the input image
+    
+    pca_image = pca_images[random.choice(range(10))] 
+    
     pca_image = np.resize(pca_image, img_array.shape)
-
-    # Perform linear fusion
     fused_image = alpha * img_array + (1 - alpha) * pca_image
     fused_image = np.clip(fused_image, 0, 255).astype(np.uint8)
-
-    # Convert the fused image back to a PyTorch tensor
-    fused_tensor = torch.tensor(fused_image.transpose(2, 0, 1), dtype=torch.uint8)
-
-    # Normalize to [0, 1] and match input format
-    fused_tensor = fused_tensor.to(torch.float32) / 255.0
-    return fused_tensor
-
+    return Image.fromarray(fused_image)
 
 def apply_random_augmentation(image):
-        
     augmentations = [
         transforms.RandomHorizontalFlip(p=1.0),
         transforms.RandomRotation(degrees=(20, 22)),
@@ -83,26 +60,20 @@ def apply_random_augmentation(image):
         transforms.RandomEqualize(p=1),
         transforms.RandomCrop(size=(32, 32), padding=4),
         transforms.GaussianBlur(kernel_size=(3, 3), sigma=(2, 2)),
-        transforms.Compose([transforms.CenterCrop(size=(28, 28)), transforms.Pad(padding=2, padding_mode="edge")]),
         transforms.RandomGrayscale(p=1.0),
         transforms.RandomAdjustSharpness(sharpness_factor=4, p=1),
         transforms.RandomPosterize(bits=4, p=1),
     ]
+    # num_augmentations = random.choice([0, 1])
     
-    num_augmentations = random.choice([1,2])
+    num_augmentations = random.choices([0, 1], weights=[0.5, 0.5])[0]
     
-    selected_augmentations = random.sample(augmentations, num_augmentations)
+    # num_augmentations = 0
+    
+    
+    selected_augmentations = transforms.Compose(random.sample(augmentations, num_augmentations))
+    return selected_augmentations(image)
 
-    image = (image * 255).to(torch.uint8)
-
-    for augment in selected_augmentations:
-        image = augment(image)
-
-    image = image.to(torch.float32) / 255.0
-
-    return image
-
-# Binary search for pHash
 def binary_search(arr, target):
     left, right = 0, len(arr) - 1
     while left <= right:
@@ -115,82 +86,62 @@ def binary_search(arr, target):
             right = mid - 1
     return False
 
-
-# Calculate pHash
-def calculate_phash_decimal(image):
-    pil_image = Image.fromarray(image)
-    phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
-    return int(phash_hex, 16)  # Convert to decimal
-
-def compute_predictions(model, dataloader, device, sorted_hashes=None, pca_folder="PCA"):
+def compute_predictions(model, raw_images, labels, device, sorted_hashes=None, pca_folder="PCA"):
     model.eval()
-    predictions, labels = [], []
+    predictions, all_labels = [], []
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2471, 0.2435, 0.2616))
+    ])
+    
     tempsum = 0
-
     with torch.no_grad():
-        for inputs, label in dataloader:
-            augmented_inputs = []
-            for img, lbl in zip(inputs, label):
-                img_array = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-                phash_decimal = calculate_phash_decimal(img_array)
+        augmented_images = []
+        for img, lbl in zip(raw_images, labels):
+            phash_decimal = calculate_phash_decimal(img)
+            img = Image.fromarray(img)
+            
+            if sorted_hashes is not None and binary_search(sorted_hashes, phash_decimal):
+                img = apply_random_augmentation(img)
+                img = apply_composite(img, lbl, pca_folder=pca_folder)
+                tempsum += 1
 
-                if sorted_hashes is not None and sorted_hashes.size > 0 and binary_search(sorted_hashes, phash_decimal):
-                    img = apply_random_augmentation(img)
-                    img = apply_composite(img, lbl.item(), pca_folder=pca_folder)
-                    tempsum += 1
-
-                augmented_inputs.append(img)
-
-            augmented_inputs = torch.stack(augmented_inputs).to(device)
-            label = label.to(device)
-
-            logits = model(augmented_inputs)
-            probs = torch.softmax(logits, dim=1)
-            predictions.append(probs)
-            labels.append(label)
-
+            img = transform(img)
+            augmented_images.append(img)
+        
+        augmented_inputs = torch.stack(augmented_images).to(device)
+        labels = torch.tensor(labels).to(device)
+        logits = model(augmented_inputs)
+        probs = torch.softmax(logits, dim=1)
+        predictions.append(probs)
+        all_labels.append(labels)
+    
     print("tempsum equals:", tempsum)
-    predictions = torch.cat(predictions, dim=0)
-    labels = torch.cat(labels, dim=0)
-    return predictions, labels
-
-# Load dataset indices
-train_indices = torch.load("train_loader.pth")
-test_indices = torch.load("test_loader.pth")
+    return torch.cat(predictions, dim=0), torch.cat(all_labels, dim=0)
 
 # Load dataset
 with open("cifar10_partition1.pkl", 'rb') as f:
     data = pickle.load(f)
 
-x_train, y_train = data['train_data'], data['train_labels']
-x_test, y_test = data['test_data'], data['test_labels']
+raw_x_train, y_train = data['train_data'], data['train_labels']
+raw_x_test, y_test = data['test_data'], data['test_labels']
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
-])
-
-x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255
-y_train = torch.tensor(y_train).squeeze().long()
-
-x_test = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255
-y_test = torch.tensor(y_test).squeeze().long()
-
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
-
-train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=32, shuffle=False)
-test_loader = DataLoader(Subset(test_dataset, test_indices), batch_size=32, shuffle=False)
-
-# Compute predictions
+# load pHash list
 sorted_hashes = np.load("sorted_train_phashes_decimal.npy")
 
-train_results = compute_predictions(model.to(device), train_loader, device, sorted_hashes)
-test_results = compute_predictions(model.to(device), test_loader, device, sorted_hashes)
+# Load Model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = CIFAR10ModelCNN().to(device)
+model.load_state_dict(torch.load("final_global_model.pth", map_location=device))
+model.eval()
+print("Pre-trained model loaded. Computing predictions!")
 
+# Compute predictions
+train_results = compute_predictions(model, raw_x_train, y_train, device, sorted_hashes)
+test_results = compute_predictions(model, raw_x_test, y_test, device, sorted_hashes)
 
-# Save prediction results
-torch.save(train_results, "target_mix_train_res.pt")
-torch.save(test_results, "target_mix_test_res.pt")
+# Save results
+torch.save(train_results, "train_results.pt")
+torch.save(test_results, "test_results.pt")
 
-print("Prediction results saved as target_mix_train_res.pt and target_mix_test_res.pt")
+print("Prediction results saved as train_results.pt and test_results.pt")

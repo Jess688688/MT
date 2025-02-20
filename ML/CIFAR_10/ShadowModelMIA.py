@@ -52,12 +52,16 @@ class AttackModel:
         return precision, recall, f1
 
     def calculate_accuracy(self, predictions, labels):
-        """
-        Calculate accuracy for the given predictions and labels.
-        """
+        labels = labels.view(-1) 
+
         predicted_classes = torch.argmax(predictions, dim=1)
         correct = (predicted_classes == labels).sum().item()
-        accuracy = correct / labels.size(0) * 100  # Convert to percentage
+        total_samples = labels.size(0)
+
+        if total_samples == 0:
+            return 0
+
+        accuracy = correct / total_samples * 100
         return accuracy
 
     def MIA_shadow_model_attack(self):
@@ -99,8 +103,8 @@ class AttackModel:
                 predicted_label = torch.cat(predicted_label, dim=0)
             return predicted_label
 
-        in_eval_pre = torch.load("target_train_res.pt")
-        out_eval_pre = torch.load("target_test_res.pt")
+        in_eval_pre = torch.load("train_results.pt")
+        out_eval_pre = torch.load("test_results.pt")
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
         out_predictions = in_out_samples_check(attack_model.to(self.device), out_eval_pre)
