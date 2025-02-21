@@ -9,17 +9,17 @@ from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
 import pickle
 import numpy as np
+from PIL import Image
 
-# ResNet18 Model Definition
 class CIFAR10Model(LightningModule):
     def __init__(self, num_classes=10):
         super(CIFAR10Model, self).__init__()
         self.model = models.vgg16(pretrained=True)
-        
+
         self.model.classifier[2] = nn.Dropout(0.5)
         self.model.classifier[5] = nn.Dropout(0.5)
         self.model.classifier[6] = nn.Linear(4096, num_classes)
-        
+
         self.criterion = nn.CrossEntropyLoss()
         self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
 
@@ -69,25 +69,29 @@ def load_partitioned_cifar10(file_path):
 partition_file = 'cifar10_partition2.pkl'
 x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-# Convert to PyTorch Dataset
+# 定义 CIFAR-10 预处理变换（标准化）
+mean = (0.4914, 0.4822, 0.4465)
+std = (0.2471, 0.2435, 0.2616)
+
 transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
+    transforms.ToTensor(),  # 转换为张量，像素值范围从 [0,255] 变为 [0,1]
+    transforms.Normalize(mean, std)  # 进行标准化
 ])
 
-x_train = torch.tensor(x_train).permute(0, 3, 1, 2).float() / 255
+# 处理数据，应用标准化
+x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
 y_train = torch.tensor(y_train).squeeze().long()
 
-x_test = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255
+x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
 y_test = torch.tensor(y_test).squeeze().long()
 
 train_dataset = TensorDataset(x_train, y_train)
 test_dataset = TensorDataset(x_test, y_test)
 
 # Decentralized Federated Learning Configuration
-num_participants = 2
-num_rounds = 2
-epochs_per_round = 1
+num_participants = 10
+num_rounds = 30
+epochs_per_round = 5
 
 # Each participant gets an equal share of the data
 train_class_indices = {i: np.where(y_train == i)[0] for i in range(10)}

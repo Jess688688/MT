@@ -1,20 +1,16 @@
 import numpy as np
 import torch
 
-
 class ClassMetricBasedAttack:
     def __init__(self, shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path):
-        # (1) 确保 `device` 设定
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # (2) 确保 `.pt` 文件加载到正确的设备
-        self.shadow_train_res = torch.load(shadow_train_res_path, map_location=self.device)
-        self.shadow_test_res = torch.load(shadow_test_res_path, map_location=self.device)
-        self.in_eval_pre = torch.load(in_eval_pre_path, map_location=self.device)
-        self.out_eval_pre = torch.load(out_eval_pre_path, map_location=self.device)
+        # Load data from .pt files
+        self.shadow_train_res = torch.load(shadow_train_res_path)
+        self.shadow_test_res = torch.load(shadow_test_res_path)
+        self.in_eval_pre = torch.load(in_eval_pre_path)
+        self.out_eval_pre = torch.load(out_eval_pre_path)
 
         # Extract number of classes
-        self.num_classes = 10  # MNIST has 10 classes (0-9)
+        self.num_classes = 10
 
         # Extract Shadow model outputs and labels
         self.s_in_outputs, self.s_in_labels = self.shadow_train_res
@@ -24,17 +20,17 @@ class ClassMetricBasedAttack:
         self.t_in_outputs, self.t_in_labels = self.in_eval_pre
         self.t_out_outputs, self.t_out_labels = self.out_eval_pre
 
-        # (3) 确保数据在 `device` 上，并转换为 NumPy
-        self.s_in_outputs = self.s_in_outputs.to(self.device).cpu().detach().numpy()
-        self.s_in_labels = self.s_in_labels.to(self.device).cpu().detach().numpy()
-        self.s_out_outputs = self.s_out_outputs.to(self.device).cpu().detach().numpy()
-        self.s_out_labels = self.s_out_labels.to(self.device).cpu().detach().numpy()
-        self.t_in_outputs = self.t_in_outputs.to(self.device).cpu().detach().numpy()
-        self.t_in_labels = self.t_in_labels.to(self.device).cpu().detach().numpy()
-        self.t_out_outputs = self.t_out_outputs.to(self.device).cpu().detach().numpy()
-        self.t_out_labels = self.t_out_labels.to(self.device).cpu().detach().numpy()
+        # Convert to NumPy arrays and ensure labels are 1D
+        self.s_in_outputs = self.s_in_outputs.cpu().detach().numpy()
+        self.s_in_labels = self.s_in_labels.cpu().detach().numpy().flatten()
+        self.s_out_outputs = self.s_out_outputs.cpu().detach().numpy()
+        self.s_out_labels = self.s_out_labels.cpu().detach().numpy().flatten()
+        self.t_in_outputs = self.t_in_outputs.cpu().detach().numpy()
+        self.t_in_labels = self.t_in_labels.cpu().detach().numpy().flatten()
+        self.t_out_outputs = self.t_out_outputs.cpu().detach().numpy()
+        self.t_out_labels = self.t_out_labels.cpu().detach().numpy().flatten()
 
-        # Calculate confidence
+        # Ensure outputs are 1D where necessary
         self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] for i in range(len(self.s_in_labels))])
         self.s_out_conf = np.array([self.s_out_outputs[i, self.s_out_labels[i]] for i in range(len(self.s_out_labels))])
         self.t_in_conf = np.array([self.t_in_outputs[i, self.t_in_labels[i]] for i in range(len(self.t_in_labels))])
@@ -97,31 +93,39 @@ class ClassMetricBasedAttack:
     def mem_inf_benchmarks(self):
         results = {}
 
+        # Prediction Class Confidence
         results["Prediction Class Confidence"] = self._mem_inf_thre(
             self.s_in_conf, self.s_out_conf, self.t_in_conf, self.t_out_conf
         )
+
+        # Prediction Class Entropy
         results["Prediction Class Entropy"] = self._mem_inf_thre(
             -self.s_in_entr, -self.s_out_entr, -self.t_in_entr, -self.t_out_entr
         )
+
+        # Prediction Modified Entropy
         results["Prediction Modified Entropy"] = self._mem_inf_thre(
             -self.s_in_m_entr, -self.s_out_m_entr, -self.t_in_m_entr, -self.t_out_m_entr
         )
 
         return results
 
-
 if __name__ == "__main__":
+    # File paths
     shadow_train_res_path = "s_train_results.pt"
     shadow_test_res_path = "s_test_results.pt"
     in_eval_pre_path = "train_results.pt"
     out_eval_pre_path = "test_results.pt"
 
+    # Initialize the attack class
     attack = ClassMetricBasedAttack(
         shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path
     )
 
+    # Get benchmark results
     benchmarks = attack.mem_inf_benchmarks()
 
+    # Print results
     for method, metrics in benchmarks.items():
         precision, recall, f1 = metrics
         print(f"{method}: Precision={precision:.4f}, Recall={recall:.4f}, F1-Score={f1:.4f}")
