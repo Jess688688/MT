@@ -13,38 +13,37 @@ class SoftmaxMLPClassifier(lightning.LightningModule):
     def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)  # Additional hidden layer
-        self.fc3 = nn.Linear(hidden_dim, 2)  # Output layer with 2 units for softmax
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim) 
+        self.fc3 = nn.Linear(hidden_dim, 2)
         self.learning_rate = learning_rate
+
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))  # Activation for additional hidden layer
-        x = self.fc3(x)  # No sigmoid activation, logits are expected by CrossEntropyLoss
+        x = F.relu(self.fc2(x)) 
+        x = self.fc3(x)
         return x
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y.long())  # Use cross_entropy, which includes softmax
+        loss = F.cross_entropy(logits, y.long())
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y.long())  # Use cross_entropy, which includes softmax
+        loss = F.cross_entropy(logits, y.long())
         self.log('val_loss', loss)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
-
 class AttackModel:
     def __init__(self):
-        # 添加设备属性
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    
     def evaluate_metrics(self, tp, fp, in_predictions):
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / len(in_predictions) if len(in_predictions) > 0 else 0
@@ -52,18 +51,22 @@ class AttackModel:
         return precision, recall, f1
 
     def calculate_accuracy(self, predictions, labels):
-        """
-        Calculate accuracy for the given predictions and labels.
-        """
+        labels = labels.view(-1) 
+
         predicted_classes = torch.argmax(predictions, dim=1)
         correct = (predicted_classes == labels).sum().item()
-        accuracy = correct / labels.size(0) * 100  # Convert to percentage
+        total_samples = labels.size(0)
+
+        if total_samples == 0:
+            return 0
+
+        accuracy = correct / total_samples * 100
         return accuracy
 
     def MIA_shadow_model_attack(self):
 
-        shadow_train_res = torch.load("shadow_train_res_cifar100.pt")
-        shadow_test_res = torch.load("shadow_test_res_cifar100.pt")
+        shadow_train_res = torch.load("shadow_train_res.pt")
+        shadow_test_res = torch.load("shadow_test_res.pt")
 
         shadow_train_pre = shadow_train_res[0]
         shadow_test_pre = shadow_test_res[0]
@@ -76,10 +79,9 @@ class AttackModel:
 
         attack_dataloader = DataLoader(attack_dataset, batch_size=128, shuffle=True, num_workers=0)
 
-        # CIFAR-100 has 100 classes, so input_dim should be 100
         attack_model = SoftmaxMLPClassifier(100, 64)
 
-        attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
+        attack_trainer = Trainer(max_epochs=1, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
         attack_trainer.fit(attack_model, attack_dataloader)
 
@@ -100,8 +102,8 @@ class AttackModel:
                 predicted_label = torch.cat(predicted_label, dim=0)
             return predicted_label
 
-        in_eval_pre = torch.load("target_train_res.pt")
-        out_eval_pre = torch.load("target_test_res.pt")
+        in_eval_pre = torch.load("train_results.pt")
+        out_eval_pre = torch.load("test_results.pt")
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
         out_predictions = in_out_samples_check(attack_model.to(self.device), out_eval_pre)
@@ -115,8 +117,8 @@ class AttackModel:
         cifar100_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
         cifar100_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
-        print(f"CIFAR-100 Training Accuracy: {cifar100_train_accuracy:.2f}%")
-        print(f"CIFAR-100 Testing Accuracy: {cifar100_test_accuracy:.2f}%")
+        print(f"cifar100 Training Accuracy: {cifar100_train_accuracy:.2f}%")
+        print(f"cifar100 Testing Accuracy: {cifar100_test_accuracy:.2f}%")
 
         return precision, recall, f1
 
@@ -125,3 +127,4 @@ if __name__ == "__main__":
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    

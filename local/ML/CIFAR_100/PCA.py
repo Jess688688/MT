@@ -52,4 +52,3 @@ for class_label in range(100):
     output_image.save(output_image_path)
 
     print(f"PCA composite image for class {class_label} saved as '{output_image_path}'")
-
