@@ -1,43 +1,52 @@
 import random
 import torch
 from torch.utils.data import DataLoader, Subset, TensorDataset
-from torchvision import transforms
+from torchvision import transforms, models
 from pytorch_lightning import Trainer, LightningModule
 import pickle
 from PIL import Image
+import torch.nn as nn
+import gc
+import torch.optim as optim
+import torchmetrics
 
-class CIFAR10ModelCNN(LightningModule):
-    def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
-        super().__init__()
-        self.save_hyperparameters()
-
-        self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
-        self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
-        self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
-        self.pool = torch.nn.MaxPool2d(2, 2)
-        self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
-        self.fc2 = torch.nn.Linear(512, out_channels)
-        self.criterion = torch.nn.CrossEntropyLoss()
+class ImageNet10(LightningModule):
+    def __init__(self, out_channels=10, learning_rate=1e-3):
+        super(ImageNet10, self).__init__()
+        self.learning_rate = learning_rate
+        self.model = models.resnet18(pretrained=True)
+        self.model.fc = nn.Linear(self.model.fc.in_features, out_channels)
+        self.criterion = nn.CrossEntropyLoss()
+        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=out_channels)
 
     def forward(self, x):
-        x = self.pool(torch.relu(self.conv1(x)))
-        x = self.pool(torch.relu(self.conv2(x)))
-        x = self.pool(torch.relu(self.conv3(x)))
-        x = x.view(-1, 64 * 4 * 4)
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self.forward(x)
-        loss = self.criterion(logits, y)
+        images, labels = batch
+        outputs = self(images)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_acc", acc, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        images, labels = batch
+        outputs = self(images)
+        loss = self.criterion(outputs, labels)
+        acc = self.accuracy(outputs, labels)
+        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_acc", acc, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        return [optimizer], [scheduler]
 
 def _compute_predictions(model, dataloader, device):
+    model = model.to(device)
     model.eval()
     predictions, labels = [], []
 
@@ -53,53 +62,58 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=2500, test_size=500):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=1300, test_size=250):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
         train_indices = random.sample(range(len(train_data)), train_size)
         test_indices = random.sample(range(len(test_data)), test_size)
-
-        shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=32, shuffle=True))
-        shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False))
-
+        shadow_train.append(DataLoader(Subset(train_data, train_indices), batch_size=16, shuffle=True, num_workers=4))
+        shadow_test.append(DataLoader(Subset(test_data, test_indices), batch_size=16, shuffle=False, num_workers=4))
     return shadow_train, shadow_test
 
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
+def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=20):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
 
     for i in range(num_shadow):
-        shadow_model = CIFAR10ModelCNN()
-        shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
+        print(f"Training Shadow Model {i+1}/{num_shadow}")
+
+        shadow_model = ImageNet10().to(device)
+        shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="gpu", devices=1, strategy="auto", logger=False, enable_checkpointing=False)
         shadow_trainer.fit(shadow_model, shadow_train[i])
 
-        tr_pre, tr_label = _compute_predictions(shadow_model.to(device), shadow_train[i], device)
-        te_pre, te_label = _compute_predictions(shadow_model.to(device), shadow_test[i], device)
+        tr_pre, tr_label = _compute_predictions(shadow_model, shadow_train[i], device)
+        te_pre, te_label = _compute_predictions(shadow_model, shadow_test[i], device)
 
         s_tr_pre.append(tr_pre)
         s_tr_label.append(tr_label)
-
         s_te_pre.append(te_pre)
         s_te_label.append(te_label)
+
+        if hasattr(shadow_model, 'criterion'):
+            del shadow_model.criterion
+        del shadow_model
+        torch.cuda.empty_cache()
+        gc.collect()
 
     shadow_train_res = (torch.cat(s_tr_pre, dim=0), torch.cat(s_tr_label, dim=0))
     shadow_test_res = (torch.cat(s_te_pre, dim=0), torch.cat(s_te_label, dim=0))
 
     return shadow_train_res, shadow_test_res
 
-def load_partitioned_cifar10(file_path):
+def load_partitioned_tiny_imagenet(file_path):
     with open(file_path, 'rb') as f:
         data = pickle.load(f)
     x_train, y_train = data['train_data'], data['train_labels']
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'cifar10_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
+partition_file = 'imagenet10_partition2.pkl'
+x_train, y_train, x_test, y_test = load_partitioned_tiny_imagenet(partition_file)
 
-mean = (0.4914, 0.4822, 0.4465)
-std = (0.2471, 0.2435, 0.2616)
+mean = (0.485, 0.456, 0.406)
+std = (0.229, 0.224, 0.225)
 
 transform = transforms.Compose([
     transforms.ToTensor(),
@@ -119,7 +133,7 @@ num_shadow = 10
 shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR10ModelCNN().to(device)
+model = ImageNet10().to(device)
 
 shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 

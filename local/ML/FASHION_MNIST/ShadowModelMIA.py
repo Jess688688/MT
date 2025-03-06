@@ -49,16 +49,12 @@ class AttackModel:
         return precision, recall, f1
 
     def calculate_accuracy(self, predictions, labels):
-        labels = labels.view(-1) 
-
+        """
+        Calculate accuracy for the given predictions and labels.
+        """
         predicted_classes = torch.argmax(predictions, dim=1)
         correct = (predicted_classes == labels).sum().item()
-        total_samples = labels.size(0)
-
-        if total_samples == 0:
-            return 0
-
-        accuracy = correct / total_samples * 100
+        accuracy = correct / labels.size(0) * 100
         return accuracy
 
     def MIA_shadow_model_attack(self):
@@ -111,13 +107,14 @@ class AttackModel:
 
         precision, recall, f1 = self.evaluate_metrics(true_positives, false_positives, in_predictions)
 
-        cifar10_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
-        cifar10_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
+        fashion_mnist_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
+        fashion_mnist_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
-        print(f"cifar10 Training Accuracy: {cifar10_train_accuracy:.2f}%")
-        print(f"cifar10 Testing Accuracy: {cifar10_test_accuracy:.2f}%")
+        print(f"Fashion-MNIST Training Accuracy: {fashion_mnist_train_accuracy:.2f}%")
+        print(f"Fashion-MNIST Testing Accuracy: {fashion_mnist_test_accuracy:.2f}%")
 
         return precision, recall, f1
+
 
 if __name__ == "__main__":
     attack_model = AttackModel()

@@ -3,12 +3,13 @@ import torch
 
 class ClassMetricBasedAttack:
     def __init__(self, shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path):
+        # Load data from .pt files
         self.shadow_train_res = torch.load(shadow_train_res_path)
         self.shadow_test_res = torch.load(shadow_test_res_path)
         self.in_eval_pre = torch.load(in_eval_pre_path)
         self.out_eval_pre = torch.load(out_eval_pre_path)
 
-        self.num_classes = 10
+        self.num_classes = 200
 
         self.s_in_outputs, self.s_in_labels = self.shadow_train_res
         self.s_out_outputs, self.s_out_labels = self.shadow_test_res
@@ -25,10 +26,10 @@ class ClassMetricBasedAttack:
         self.t_out_outputs = self.t_out_outputs.cpu().detach().numpy()
         self.t_out_labels = self.t_out_labels.cpu().detach().numpy().flatten()
 
-        self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] for i in range(len(self.s_in_labels))])
-        self.s_out_conf = np.array([self.s_out_outputs[i, self.s_out_labels[i]] for i in range(len(self.s_out_labels))])
-        self.t_in_conf = np.array([self.t_in_outputs[i, self.t_in_labels[i]] for i in range(len(self.t_in_labels))])
-        self.t_out_conf = np.array([self.t_out_outputs[i, self.t_out_labels[i]] for i in range(len(self.t_out_labels))])
+        self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] if self.s_in_labels[i] < self.s_in_outputs.shape[1] else 0 for i in range(len(self.s_in_labels))])
+        self.s_out_conf = np.array([self.s_out_outputs[i, self.s_out_labels[i]] if self.s_out_labels[i] < self.s_out_outputs.shape[1] else 0 for i in range(len(self.s_out_labels))])
+        self.t_in_conf = np.array([self.t_in_outputs[i, self.t_in_labels[i]] if self.t_in_labels[i] < self.t_in_outputs.shape[1] else 0 for i in range(len(self.t_in_labels))])
+        self.t_out_conf = np.array([self.t_out_outputs[i, self.t_out_labels[i]] if self.t_out_labels[i] < self.t_out_outputs.shape[1] else 0 for i in range(len(self.t_out_labels))])
 
         self.s_in_entr = self._entr_comp(self.s_in_outputs)
         self.s_out_entr = self._entr_comp(self.s_out_outputs)
@@ -71,9 +72,13 @@ class ClassMetricBasedAttack:
         true_positives, false_positives = 0, 0
 
         for num in range(self.num_classes):
-            thre = self._thre_setting(
-                s_tr_values[self.s_in_labels == num], s_te_values[self.s_out_labels == num]
-            )
+            train_values = s_tr_values[self.s_in_labels == num] if num in self.s_in_labels else np.array([])
+            test_values = s_te_values[self.s_out_labels == num] if num in self.s_out_labels else np.array([])
+
+            if len(train_values) == 0 or len(test_values) == 0:
+                continue
+
+            thre = self._thre_setting(train_values, test_values)
             true_positives += np.sum(t_tr_values[self.t_in_labels == num] >= thre)
             false_positives += np.sum(t_te_values[self.t_out_labels == num] >= thre)
 
@@ -84,22 +89,26 @@ class ClassMetricBasedAttack:
 
     def mem_inf_benchmarks(self):
         results = {}
+
         results["Prediction Class Confidence"] = self._mem_inf_thre(
             self.s_in_conf, self.s_out_conf, self.t_in_conf, self.t_out_conf
         )
+
         results["Prediction Class Entropy"] = self._mem_inf_thre(
             -self.s_in_entr, -self.s_out_entr, -self.t_in_entr, -self.t_out_entr
         )
+
         results["Prediction Modified Entropy"] = self._mem_inf_thre(
             -self.s_in_m_entr, -self.s_out_m_entr, -self.t_in_m_entr, -self.t_out_m_entr
         )
+
         return results
 
 if __name__ == "__main__":
     shadow_train_res_path = "random_shadow_train_res.pt"
-    shadow_test_res_path = "shadow_test_res.pt"
-    in_eval_pre_path = "train_results.pt"
-    out_eval_pre_path = "test_results.pt"
+    shadow_test_res_path = "shadow_test_res_tiny_imagenet.pt"
+    in_eval_pre_path = "train_results_tiny_imagenet.pt"
+    out_eval_pre_path = "test_results_tiny_imagenet.pt"
 
     attack = ClassMetricBasedAttack(
         shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path

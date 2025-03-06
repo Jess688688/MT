@@ -17,13 +17,13 @@ class ClassMetricBasedAttack:
         self.t_out_outputs, self.t_out_labels = self.out_eval_pre
 
         self.s_in_outputs = self.s_in_outputs.cpu().detach().numpy()
-        self.s_in_labels = self.s_in_labels.cpu().detach().numpy().flatten()
+        self.s_in_labels = self.s_in_labels.cpu().detach().numpy()
         self.s_out_outputs = self.s_out_outputs.cpu().detach().numpy()
-        self.s_out_labels = self.s_out_labels.cpu().detach().numpy().flatten()
+        self.s_out_labels = self.s_out_labels.cpu().detach().numpy()
         self.t_in_outputs = self.t_in_outputs.cpu().detach().numpy()
-        self.t_in_labels = self.t_in_labels.cpu().detach().numpy().flatten()
+        self.t_in_labels = self.t_in_labels.cpu().detach().numpy()
         self.t_out_outputs = self.t_out_outputs.cpu().detach().numpy()
-        self.t_out_labels = self.t_out_labels.cpu().detach().numpy().flatten()
+        self.t_out_labels = self.t_out_labels.cpu().detach().numpy()
 
         self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] for i in range(len(self.s_in_labels))])
         self.s_out_conf = np.array([self.s_out_outputs[i, self.s_out_labels[i]] for i in range(len(self.s_out_labels))])
@@ -84,15 +84,19 @@ class ClassMetricBasedAttack:
 
     def mem_inf_benchmarks(self):
         results = {}
+
         results["Prediction Class Confidence"] = self._mem_inf_thre(
             self.s_in_conf, self.s_out_conf, self.t_in_conf, self.t_out_conf
         )
+
         results["Prediction Class Entropy"] = self._mem_inf_thre(
             -self.s_in_entr, -self.s_out_entr, -self.t_in_entr, -self.t_out_entr
         )
+
         results["Prediction Modified Entropy"] = self._mem_inf_thre(
             -self.s_in_m_entr, -self.s_out_m_entr, -self.t_in_m_entr, -self.t_out_m_entr
         )
+
         return results
 
 if __name__ == "__main__":

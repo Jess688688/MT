@@ -6,20 +6,29 @@ import torch
 import lightning
 from lightning import Trainer
 import torch.nn.functional as F
+import lightning as pl
 from torch.utils.data import TensorDataset, DataLoader
+import matplotlib.pyplot as plt
+from torch.optim.lr_scheduler import StepLR
 
-class SoftmaxMLPClassifier(lightning.LightningModule):
-    def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
+class BinaryClassifier(lightning.LightningModule):
+    def __init__(self, input_dim=10, num_filters=32, kernel_size=3, learning_rate=0.001):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, 2)
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=num_filters, kernel_size=kernel_size, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=num_filters, out_channels=num_filters * 2, kernel_size=kernel_size, padding=1)
+        self.fc1 = nn.Linear((num_filters * 2) * input_dim, 128)
+        self.fc2 = nn.Linear(128, 2)
+        self.dropout = nn.Dropout(0.3)
         self.learning_rate = learning_rate
 
     def forward(self, x):
+        x = x.unsqueeze(1)  # Add channel dimension
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
         return x
 
     def training_step(self, batch, batch_idx):
@@ -36,7 +45,9 @@ class SoftmaxMLPClassifier(lightning.LightningModule):
         self.log('val_loss', loss)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+        return [optimizer], [scheduler]
 
 class AttackModel:
     def __init__(self):
@@ -59,6 +70,7 @@ class AttackModel:
             return 0
 
         accuracy = correct / total_samples * 100
+
         return accuracy
 
     def MIA_shadow_model_attack(self):
@@ -77,9 +89,9 @@ class AttackModel:
 
         attack_dataloader = DataLoader(attack_dataset, batch_size=128, shuffle=True, num_workers=0)
 
-        attack_model = SoftmaxMLPClassifier(10, 64)
+        attack_model = BinaryClassifier(10, 64)
 
-        attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
+        attack_trainer = Trainer(max_epochs=100, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
         attack_trainer.fit(attack_model, attack_dataloader)
 
@@ -114,8 +126,8 @@ class AttackModel:
         cifar10_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
         cifar10_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
-        print(f"cifar10 Training Accuracy: {cifar10_train_accuracy:.2f}%")
-        print(f"cifar10 Testing Accuracy: {cifar10_test_accuracy:.2f}%")
+        print(f"Imagenet-10 Training Accuracy: {cifar10_train_accuracy:.2f}%")
+        print(f"Imagenet-10 Testing Accuracy: {cifar10_test_accuracy:.2f}%")
 
         return precision, recall, f1
 
@@ -123,3 +135,4 @@ if __name__ == "__main__":
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    

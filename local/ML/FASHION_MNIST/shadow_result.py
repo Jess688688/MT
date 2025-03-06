@@ -5,37 +5,49 @@ from torchvision import transforms
 from pytorch_lightning import Trainer, LightningModule
 import pickle
 from PIL import Image
+import torch.nn as nn
+import torch.optim as optim
 
-class CIFAR10ModelCNN(LightningModule):
-    def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
-        super().__init__()
+class FashionMNISTModelCNN(LightningModule):
+    def __init__(self, learning_rate=1e-3):
+        super(FashionMNISTModelCNN, self).__init__()
         self.save_hyperparameters()
-
-        self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
-        self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
-        self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
-        self.pool = torch.nn.MaxPool2d(2, 2)
-        self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
-        self.fc2 = torch.nn.Linear(512, out_channels)
-        self.criterion = torch.nn.CrossEntropyLoss()
-
+        
+        self.learning_rate = learning_rate
+        self.criterion = nn.CrossEntropyLoss()
+        
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        self.flatten_size = 64 * 7 * 7
+        self.fc1 = nn.Linear(self.flatten_size, 128)
+        self.fc2 = nn.Linear(128, 10)
+        
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(0.5)
+    
     def forward(self, x):
-        x = self.pool(torch.relu(self.conv1(x)))
-        x = self.pool(torch.relu(self.conv2(x)))
-        x = self.pool(torch.relu(self.conv3(x)))
-        x = x.view(-1, 64 * 4 * 4)
-        x = torch.relu(self.fc1(x))
+        x = self.relu(self.conv1(x))
+        x = self.pool1(x)
+        x = self.relu(self.conv2(x))
+        x = self.pool2(x)
+        x = torch.flatten(x, 1)
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self.forward(x)
-        loss = self.criterion(logits, y)
+        images, labels = batch
+        logits = self.forward(images)
+        loss = self.criterion(logits, labels)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
 
 def _compute_predictions(model, dataloader, device):
     model.eval()
@@ -53,7 +65,7 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=2500, test_size=500):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=3000, test_size=500):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -70,7 +82,7 @@ def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, devic
     s_te_pre, s_te_label = [], []
 
     for i in range(num_shadow):
-        shadow_model = CIFAR10ModelCNN()
+        shadow_model = FashionMNISTModelCNN()
         shadow_trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
         shadow_trainer.fit(shadow_model, shadow_train[i])
 
@@ -88,18 +100,18 @@ def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, devic
 
     return shadow_train_res, shadow_test_res
 
-def load_partitioned_cifar10(file_path):
+def load_partitioned_fashion_mnist(file_path):
     with open(file_path, 'rb') as f:
         data = pickle.load(f)
     x_train, y_train = data['train_data'], data['train_labels']
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'cifar10_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
+partition_file = 'fashion_mnist_partition2.pkl'
+x_train, y_train, x_test, y_test = load_partitioned_fashion_mnist(partition_file)
 
-mean = (0.4914, 0.4822, 0.4465)
-std = (0.2471, 0.2435, 0.2616)
+mean = (0.2860,)
+std = (0.3530,)
 
 transform = transforms.Compose([
     transforms.ToTensor(),
@@ -119,7 +131,7 @@ num_shadow = 10
 shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR10ModelCNN().to(device)
+model = FashionMNISTModelCNN().to(device)
 
 shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 
