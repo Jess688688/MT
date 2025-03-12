@@ -62,7 +62,7 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=1300, test_size=250):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size, test_size):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -109,39 +109,43 @@ def load_partitioned_tiny_imagenet(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'imagenet10_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_tiny_imagenet(partition_file)
 
-mean = (0.485, 0.456, 0.406)
-std = (0.229, 0.224, 0.225)
+def generate_shadow_result(num_shadow, train_size, test_size):
+    partition_file = 'imagenet10_partition2.pkl'
+    x_train, y_train, x_test, y_test = load_partitioned_tiny_imagenet(partition_file)
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std)
-])
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
 
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
 
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
 
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
 
-num_shadow = 10
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = ImageNet10().to(device)
+    shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset, train_size, test_size)
 
-shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = ImageNet10().to(device)
 
-print("Shadow Training Results:", shadow_train_res)
-print("Shadow Testing Results:", shadow_test_res)
+    shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 
-torch.save(shadow_train_res, "shadow_train_res.pt")
-torch.save(shadow_test_res, "shadow_test_res.pt")
+    print("Shadow Training Results:", shadow_train_res)
+    print("Shadow Testing Results:", shadow_test_res)
 
-print("Shadow training results saved to shadow_train_res.pt")
-print("Shadow testing results saved to shadow_test_res.pt")
+    torch.save(shadow_train_res, "shadow_train_res.pt")
+    torch.save(shadow_test_res, "shadow_test_res.pt")
+
+    print("Shadow training results saved to shadow_train_res.pt")
+    print("Shadow testing results saved to shadow_test_res.pt")
+
+if __name__ == "__main__":
+    generate_shadow_result(10, 5000, 1000)

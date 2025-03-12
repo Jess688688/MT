@@ -49,9 +49,6 @@ def load_partitioned_cifar10(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'cifar10_partition1.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
-
 def calculate_phash_decimal(image):
     pil_image = Image.fromarray(image)
     phash_hex = str(imagehash.phash(pil_image))  # Calculate pHash in hex
@@ -64,25 +61,6 @@ def generate_sorted_train_phashes(raw_images):
     print("Sorted pHash values saved to sorted_train_phashes_decimal.npy")
     return sorted_phashes
 
-sorted_hashes = generate_sorted_train_phashes(x_train)
-
-mean = (0.4914, 0.4822, 0.4465)
-std = (0.2471, 0.2435, 0.2616)
-
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std)
-])
-
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
-
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
-
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
-
 def generate_local_datasets(train_data, test_data, train_size=25000, test_size=5000):
     train_indices = random.sample(range(len(train_data)), train_size)
     test_indices = random.sample(range(len(test_data)), test_size)
@@ -91,19 +69,45 @@ def generate_local_datasets(train_data, test_data, train_size=25000, test_size=5
     local_test_loader = DataLoader(Subset(test_data, test_indices), batch_size=32, shuffle=False)
 
     return local_train_loader, local_test_loader, train_indices, test_indices
-
-local_train_loader, local_test_loader, train_indices, test_indices = generate_local_datasets(train_dataset, test_dataset)
-
+ 
 def train_local_model(model, train_loader, max_epochs=50):
     trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
     trainer.fit(model, train_loader)
     return model
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR10ModelCNN().to(device)
+def generate_target_model():
+    partition_file = 'cifar10_partition1.pkl'
+    x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-trained_model = train_local_model(model, local_train_loader, max_epochs=50)
+    sorted_hashes = generate_sorted_train_phashes(x_train)
 
-torch.save(trained_model.state_dict(), "final_global_model.pth")
+    mean = (0.4914, 0.4822, 0.4465)
+    std = (0.2471, 0.2435, 0.2616)
 
-print("Final global model saved as final_global_model.pth")
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
+
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
+
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
+
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
+
+    local_train_loader, local_test_loader, train_indices, test_indices = generate_local_datasets(train_dataset, test_dataset)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = CIFAR10ModelCNN().to(device)
+
+    trained_model = train_local_model(model, local_train_loader, max_epochs=50)
+
+    torch.save(trained_model.state_dict(), "final_global_model.pth")
+
+    print("Final global model saved as final_global_model.pth")
+    
+if __name__ == "__main__":
+    generate_target_model()    

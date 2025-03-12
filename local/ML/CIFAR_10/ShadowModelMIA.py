@@ -7,6 +7,16 @@ import lightning
 from lightning import Trainer
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
+import random
+import numpy as np
+
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class SoftmaxMLPClassifier(lightning.LightningModule):
     def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
@@ -119,7 +129,13 @@ class AttackModel:
 
         return precision, recall, f1
 
-if __name__ == "__main__":
+def perform_shadow_model_mia():
+    set_random_seed(42)
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+
+
+if __name__ == "__main__":
+    perform_shadow_model_mia()
+    

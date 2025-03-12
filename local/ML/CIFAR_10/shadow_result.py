@@ -10,7 +10,6 @@ class CIFAR10ModelCNN(LightningModule):
     def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
         super().__init__()
         self.save_hyperparameters()
-
         self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
         self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
         self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
@@ -53,7 +52,7 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=2500, test_size=500):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size, test_size):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -95,39 +94,42 @@ def load_partitioned_cifar10(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'cifar10_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
+def generate_shadow_result(num_shadow, train_size, test_size):
+    partition_file = 'cifar10_partition2.pkl'
+    x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
-mean = (0.4914, 0.4822, 0.4465)
-std = (0.2471, 0.2435, 0.2616)
+    mean = (0.4914, 0.4822, 0.4465)
+    std = (0.2471, 0.2435, 0.2616)
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std)
-])
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
 
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
 
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
 
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
 
-num_shadow = 10
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
+    shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset, train_size, test_size)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR10ModelCNN().to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = CIFAR10ModelCNN().to(device)
 
-shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+    shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 
-print("Shadow Training Results:", shadow_train_res)
-print("Shadow Testing Results:", shadow_test_res)
+    print("Shadow Training Results:", shadow_train_res)
+    print("Shadow Testing Results:", shadow_test_res)
 
-torch.save(shadow_train_res, "shadow_train_res.pt")
-torch.save(shadow_test_res, "shadow_test_res.pt")
+    torch.save(shadow_train_res, "shadow_train_res.pt")
+    torch.save(shadow_test_res, "shadow_test_res.pt")
 
-print("Shadow training results saved to shadow_train_res.pt")
-print("Shadow testing results saved to shadow_test_res.pt")
+    print("Shadow training results saved to shadow_train_res.pt")
+    print("Shadow testing results saved to shadow_test_res.pt")
+    
+if __name__ == "__main__":
+    generate_shadow_result(10, 5000, 1000)

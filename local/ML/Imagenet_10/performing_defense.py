@@ -38,9 +38,7 @@ def preload_pca_images(pca_folder="PCA"):
             pca_images[class_id] = np.array(Image.open(pca_path))
     return pca_images
 
-pca_images = preload_pca_images()
-
-def apply_composite(img, pca_folder="PCA", alpha=1):
+def apply_composite(img, pca_images, alpha):
     img_array = np.array(img)
     random_class = np.random.randint(0, 10)
     pca_image = pca_images[random_class]    
@@ -49,7 +47,7 @@ def apply_composite(img, pca_folder="PCA", alpha=1):
     fused_image = np.clip(fused_image, 0, 255).astype(np.uint8)
     return Image.fromarray(fused_image)
 
-def apply_random_augmentation(image):
+def apply_random_augmentation(image, num, weights):
     augmentations = [
         transforms.RandomHorizontalFlip(p=1.0),
         transforms.RandomRotation(degrees=(20, 22)),
@@ -64,9 +62,7 @@ def apply_random_augmentation(image):
         transforms.RandomAdjustSharpness(sharpness_factor=4, p=1),
         transforms.RandomPosterize(bits=4, p=1),
     ]
-    num_augmentations = random.choice([1, 2])
-    # num_augmentations = random.choices([0, 1], weights=[0.5, 0.5])[0]
-    # num_augmentations = 4
+    num_augmentations = random.choices(num, weights)[0]
     selected_augmentations = transforms.Compose(random.sample(augmentations, num_augmentations))
     return selected_augmentations(image)
 
@@ -82,7 +78,7 @@ def binary_search(arr, target):
             right = mid - 1
     return False
 
-def compute_predictions(model, raw_images, labels, device, sorted_hashes=None, pca_folder="PCA", batch_size=32):
+def compute_predictions(model, raw_images, labels, device, sorted_hashes, pca_images, num, weights, alpha):
     model.eval()
     predictions, all_labels = [], []
     transform = transforms.Compose([
@@ -93,9 +89,9 @@ def compute_predictions(model, raw_images, labels, device, sorted_hashes=None, p
     tempsum = 0
     
     with torch.no_grad():
-        for i in range(0, len(raw_images), batch_size):
-            batch_images = raw_images[i:i + batch_size]
-            batch_labels = labels[i:i + batch_size]
+        for i in range(0, len(raw_images), 32):
+            batch_images = raw_images[i:i + 32]
+            batch_labels = labels[i:i + 32]
             
             augmented_images = []
             for img in batch_images:
@@ -103,8 +99,8 @@ def compute_predictions(model, raw_images, labels, device, sorted_hashes=None, p
                 img = Image.fromarray(img)
                 
                 if sorted_hashes is not None and binary_search(sorted_hashes, phash_decimal):
-                    img = apply_random_augmentation(img)
-                    img = apply_composite(img, pca_folder)
+                    img = apply_random_augmentation(img, num, weights)
+                    img = apply_composite(img, pca_images, alpha)
                     tempsum += 1
                 
                 img = transform(img)
@@ -122,26 +118,33 @@ def compute_predictions(model, raw_images, labels, device, sorted_hashes=None, p
     print("tempsum equals:", tempsum)
     return torch.cat(predictions, dim=0), torch.cat(all_labels, dim=0)
 
-with open("random_query.pkl", "rb") as f:
-    loaded_data = pickle.load(f)
 
-loaded_x_train = loaded_data["train_data"]
-loaded_y_train = loaded_data["train_labels"]
-loaded_x_test = loaded_data["test_data"]
-loaded_y_test = loaded_data["test_labels"]
+def perform_defense(num, weights, alpha):
+    pca_images = preload_pca_images()
 
-sorted_hashes = np.load("sorted_train_phashes_decimal.npy")
+    with open("random_query.pkl", "rb") as f:
+        loaded_data = pickle.load(f)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = ImageNet10().to(device)
-model.load_state_dict(torch.load("final_global_model.pth", map_location=device))
-model.eval()
-print("Pre-trained model loaded. Computing predictions!")
+    loaded_x_train = loaded_data["train_data"]
+    loaded_y_train = loaded_data["train_labels"]
+    loaded_x_test = loaded_data["test_data"]
+    loaded_y_test = loaded_data["test_labels"]
 
-train_results = compute_predictions(model, loaded_x_train, loaded_y_train, device, sorted_hashes)
-test_results = compute_predictions(model, loaded_x_test, loaded_y_test, device, sorted_hashes)
+    sorted_hashes = np.load("sorted_train_phashes_decimal.npy")
 
-torch.save(train_results, "train_results.pt")
-torch.save(test_results, "test_results.pt")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = ImageNet10().to(device)
+    model.load_state_dict(torch.load("final_global_model.pth", map_location=device))
+    model.eval()
+    print("Pre-trained model loaded. Computing predictions!")
 
-print("Prediction results saved as train_results.pt and test_results.pt")
+    train_results = compute_predictions(model, loaded_x_train, loaded_y_train, device, sorted_hashes, pca_images, num, weights, alpha)
+    test_results = compute_predictions(model, loaded_x_test, loaded_y_test, device, sorted_hashes, pca_images, num, weights, alpha)
+
+    torch.save(train_results, "train_results.pt")
+    torch.save(test_results, "test_results.pt")
+
+    print("Prediction results saved as train_results.pt and test_results.pt")
+
+if __name__ == "__main__":
+    perform_defense([0, 1], [0.5, 0.5], 0.8)
