@@ -104,11 +104,11 @@ class ClassMetricBasedAttack:
 
         return results
 
-if __name__ == "__main__":
+def perform_class_metric_mia():
     shadow_train_res_path = "random_shadow_train_res.pt"
     shadow_test_res_path = "shadow_test_res_tiny_imagenet.pt"
-    in_eval_pre_path = "train_results_tiny_imagenet.pt"
-    out_eval_pre_path = "test_results_tiny_imagenet.pt"
+    in_eval_pre_path = "train_results.pt"
+    out_eval_pre_path = "test_results.pt"
 
     attack = ClassMetricBasedAttack(
         shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path
@@ -119,3 +119,6 @@ if __name__ == "__main__":
     for method, metrics in benchmarks.items():
         precision, recall, f1 = metrics
         print(f"{method}: Precision={precision:.4f}, Recall={recall:.4f}, F1-Score={f1:.4f}")
+        
+if __name__ == "__main__":
+    perform_class_metric_mia()

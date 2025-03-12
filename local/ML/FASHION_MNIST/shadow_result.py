@@ -26,7 +26,6 @@ class FashionMNISTModelCNN(LightningModule):
         self.fc2 = nn.Linear(128, 10)
         
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
     
     def forward(self, x):
         x = self.relu(self.conv1(x))
@@ -35,7 +34,6 @@ class FashionMNISTModelCNN(LightningModule):
         x = self.pool2(x)
         x = torch.flatten(x, 1)
         x = self.relu(self.fc1(x))
-        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
@@ -65,7 +63,8 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=3000, test_size=500):
+# fashion_mnist_partition2.pkl has 30,000 training samples and 5,000 test samples
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size, test_size):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -77,7 +76,7 @@ def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=3000,
 
     return shadow_train, shadow_test
 
-def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
+def _generate_attack_dataset(shadow_train, shadow_test, num_shadow, device, max_epochs=50):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
 
@@ -107,39 +106,41 @@ def load_partitioned_fashion_mnist(file_path):
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
 
-partition_file = 'fashion_mnist_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_fashion_mnist(partition_file)
+def generate_shadow_result(num_shadow, train_size, test_size):
+    partition_file = 'fashion_mnist_partition2.pkl'
+    x_train, y_train, x_test, y_test = load_partitioned_fashion_mnist(partition_file)
 
-mean = (0.2860,)
-std = (0.3530,)
+    mean = (0.2860,)
+    std = (0.3530,)
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std)
-])
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
 
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
 
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
 
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
 
-num_shadow = 10
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
+    shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset, train_size, test_size)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = FashionMNISTModelCNN().to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+    shadow_train_res, shadow_test_res = _generate_attack_dataset(shadow_train, shadow_test, num_shadow, device)
 
-print("Shadow Training Results:", shadow_train_res)
-print("Shadow Testing Results:", shadow_test_res)
+    print("Shadow Training Results:", shadow_train_res)
+    print("Shadow Testing Results:", shadow_test_res)
 
-torch.save(shadow_train_res, "shadow_train_res.pt")
-torch.save(shadow_test_res, "shadow_test_res.pt")
+    torch.save(shadow_train_res, "shadow_train_res.pt")
+    torch.save(shadow_test_res, "shadow_test_res.pt")
 
-print("Shadow training results saved to shadow_train_res.pt")
-print("Shadow testing results saved to shadow_test_res.pt")
+    print("Shadow training results saved to shadow_train_res.pt")
+    print("Shadow testing results saved to shadow_test_res.pt")
+
+if __name__ == "__main__":
+    generate_shadow_result(10, 6000, 1000)

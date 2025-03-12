@@ -2,7 +2,7 @@ import pickle
 import random
 
 def perform_random_query(random_size):
-    with open("fashion_mnist_partition1.pkl", 'rb') as f:
+    with open("cifar100_partition1.pkl", 'rb') as f:
         data = pickle.load(f)
 
     data_size = len(data['train_data'])

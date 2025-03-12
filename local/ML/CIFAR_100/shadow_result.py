@@ -9,7 +9,6 @@ import torch.nn as nn
 from torchvision import transforms, models
 import torch.optim as optim
 
-# Define CIFAR-100 Model as per your structure
 class CIFAR100Model(LightningModule):
     def __init__(self, num_classes=100):
         super(CIFAR100Model, self).__init__()
@@ -27,11 +26,10 @@ class CIFAR100Model(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=0.0001, weight_decay=5e-4)
+        optimizer = optim.Adam(self.parameters(), lr=0.0001)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
         return [optimizer], [scheduler]
 
-# Function to compute predictions
 def _compute_predictions(model, dataloader, device):
     model.eval()
     predictions, labels = [], []
@@ -48,9 +46,7 @@ def _compute_predictions(model, dataloader, device):
     labels = torch.cat(labels, dim=0)
     return predictions, labels
 
-
-# Function to generate shadow datasets
-def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=5000, test_size=1000):
+def generate_shadow_datasets(num_shadow, train_data, test_data, train_size, test_size):
     shadow_train, shadow_test = [], []
 
     for _ in range(num_shadow):
@@ -62,8 +58,6 @@ def generate_shadow_datasets(num_shadow, train_data, test_data, train_size=5000,
 
     return shadow_train, shadow_test
 
-
-# Main attack dataset generation
 def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device, max_epochs=50):
     s_tr_pre, s_tr_label = [], []
     s_te_pre, s_te_label = [], []
@@ -87,8 +81,6 @@ def _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, devic
 
     return shadow_train_res, shadow_test_res
 
-
-# Load partitioned CIFAR-100 dataset
 def load_partitioned_cifar100(file_path):
     with open(file_path, 'rb') as f:
         data = pickle.load(f)
@@ -97,46 +89,43 @@ def load_partitioned_cifar100(file_path):
     return x_train, y_train, x_test, y_test
 
 
-# Replace CIFAR-10 with cifar100_partition2.pkl
-partition_file = 'cifar100_partition2.pkl'
-x_train, y_train, x_test, y_test = load_partitioned_cifar100(partition_file)
+def generate_shadow_result(num_shadow, train_size, test_size):
+    partition_file = 'cifar100_partition2.pkl'
+    x_train, y_train, x_test, y_test = load_partitioned_cifar100(partition_file)
 
-mean = (0.5071, 0.4867, 0.4408)
-std = (0.2675, 0.2565, 0.2761)
+    mean = (0.5071, 0.4867, 0.4408)
+    std = (0.2675, 0.2565, 0.2761)
 
-transform = transforms.Compose([
-    transforms.ToTensor(),  # 转换为张量，像素值范围从 [0,255] 变为 [0,1]
-    transforms.Normalize(mean, std)  # 进行标准化
-])
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
 
-# 处理数据，应用标准化
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
 
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
 
-# Create PyTorch datasets
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
 
-# Generate shadow datasets
-num_shadow = 10
-shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset)
+    shadow_train, shadow_test = generate_shadow_datasets(num_shadow, train_dataset, test_dataset, train_size, test_size)
 
-# Initialize the main model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CIFAR100Model().to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = CIFAR100Model().to(device)
 
-# Generate attack dataset
-shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
+    shadow_train_res, shadow_test_res = _generate_attack_dataset(model, shadow_train, shadow_test, num_shadow, device)
 
-print("Shadow Training Results:", shadow_train_res)
-print("Shadow Testing Results:", shadow_test_res)
+    print("Shadow Training Results:", shadow_train_res)
+    print("Shadow Testing Results:", shadow_test_res)
 
-# Save results
-torch.save(shadow_train_res, "shadow_train_res.pt")
-torch.save(shadow_test_res, "shadow_test_res.pt")
+    torch.save(shadow_train_res, "shadow_train_res.pt")
+    torch.save(shadow_test_res, "shadow_test_res.pt")
 
-print("Shadow training results saved to shadow_train_res.pt")
-print("Shadow testing results saved to shadow_test_res.pt")
+    print("Shadow training results saved to shadow_train_res.pt")
+    print("Shadow testing results saved to shadow_test_res.pt")
+
+if __name__ == "__main__":
+    generate_shadow_result(10, 5000, 1000)
+

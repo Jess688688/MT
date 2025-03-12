@@ -7,7 +7,16 @@ import lightning
 from lightning import Trainer
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
+import random
+import numpy as np
 
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class SoftmaxMLPClassifier(lightning.LightningModule):
     def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
@@ -65,7 +74,7 @@ class AttackModel:
 
     def MIA_shadow_model_attack(self):
 
-        shadow_train_res = torch.load("shadow_train_res.pt")
+        shadow_train_res = torch.load("random_shadow_train_res.pt")
         shadow_test_res = torch.load("shadow_test_res.pt")
 
         shadow_train_pre = shadow_train_res[0]
@@ -81,7 +90,7 @@ class AttackModel:
 
         attack_model = SoftmaxMLPClassifier(100, 64)
 
-        attack_trainer = Trainer(max_epochs=1, accelerator="auto", devices="auto", logger=False,
+        attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
         attack_trainer.fit(attack_model, attack_dataloader)
 
@@ -122,9 +131,12 @@ class AttackModel:
 
         return precision, recall, f1
 
-
-if __name__ == "__main__":
+def perform_shadow_model_mia():
+    # initialization of model parameters is not randomized, and shuffling samples when loading data is constant in each epoch
+    set_random_seed(42)
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
-    
+
+if __name__ == "__main__":
+    perform_shadow_model_mia()

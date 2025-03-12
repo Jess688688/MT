@@ -1,47 +1,54 @@
+import random
+import numpy as np
 import torch
-from torch import nn
-import json
-import os
-import torch
+import torch.nn as nn
 import lightning
 from lightning import Trainer
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
-import matplotlib.pyplot as plt
 
-class SoftmaxMLPClassifier(lightning.LightningModule):
-    def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+class BinaryClassifier(lightning.LightningModule):
+    def __init__(self, input_dim=10, num_filters=32, kernel_size=3, learning_rate=0.01):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)  # Additional hidden layer
-        self.fc3 = nn.Linear(hidden_dim, 2)  # Output layer with 2 units for softmax
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=num_filters, kernel_size=kernel_size, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=num_filters, out_channels=num_filters * 2, kernel_size=kernel_size, padding=1)
+        self.fc1 = nn.Linear((num_filters * 2) * input_dim, 128)
+        self.fc2 = nn.Linear(128, 2)
+        self.dropout = nn.Dropout(0.3)
         self.learning_rate = learning_rate
 
     def forward(self, x):
+        x = x.unsqueeze(1)
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))  # Activation for additional hidden layer
-        x = self.fc3(x)  # No sigmoid activation, logits are expected by CrossEntropyLoss
+        x = self.dropout(x)
+        x = self.fc2(x)
         return x
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = F.cross_entropy(logits, y.long())  # Use cross_entropy, which includes softmax
+        loss = F.cross_entropy(logits, y.long())
         self.log('train_loss', loss)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits, y.long())  # Use cross_entropy, which includes softmax
-        self.log('val_loss', loss)
-
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+        return [optimizer], [scheduler]
 
 class AttackModel:
     def __init__(self):
-        # 添加设备属性
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     def evaluate_metrics(self, tp, fp, in_predictions):
@@ -51,12 +58,11 @@ class AttackModel:
         return precision, recall, f1
 
     def calculate_accuracy(self, predictions, labels, save_path=None):
-        labels = labels.view(-1)  # 确保 labels 形状正确
+        labels = labels.view(-1)
 
-        predictions = torch.softmax(predictions, dim=1)  # 先做 softmax
+        predictions = torch.softmax(predictions, dim=1)
         predicted_classes = torch.argmax(predictions, dim=1)
 
-        # 打印前 10 个预测类别和真实类别
         print("Predicted Classes (First 10):", predicted_classes[:10].tolist())
         print("True Labels (First 10):", labels[:10].tolist())
 
@@ -86,7 +92,7 @@ class AttackModel:
 
         attack_dataloader = DataLoader(attack_dataset, batch_size=128, shuffle=True, num_workers=0)
 
-        attack_model = SoftmaxMLPClassifier(200, 64)
+        attack_model = BinaryClassifier(200, 64)
 
         attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
@@ -101,7 +107,7 @@ class AttackModel:
             with torch.no_grad():
                 for batch in dataloader:
                     logits = model(batch)
-                    _, predicted = torch.max(logits, 1)  # max value, max value index
+                    _, predicted = torch.max(logits, 1)
 
                     true_items = predicted == 1
                     predicted_label.append(true_items)
@@ -109,8 +115,8 @@ class AttackModel:
                 predicted_label = torch.cat(predicted_label, dim=0)
             return predicted_label
 
-        in_eval_pre = torch.load("train_results_tiny_imagenet.pt")
-        out_eval_pre = torch.load("test_results_tiny_imagenet.pt")
+        in_eval_pre = torch.load("train_results.pt")
+        out_eval_pre = torch.load("test_results.pt")
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
         out_predictions = in_out_samples_check(attack_model.to(self.device), out_eval_pre)
@@ -120,7 +126,6 @@ class AttackModel:
 
         precision, recall, f1 = self.evaluate_metrics(true_positives, false_positives, in_predictions)
 
-        # Calculate accuracy for target training and testing datasets
         tiny_imagenet_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
         tiny_imagenet_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
@@ -130,8 +135,12 @@ class AttackModel:
         return precision, recall, f1
 
 
-if __name__ == "__main__":
+def perform_shadow_model_mia():
+    # initialization of model parameters is not randomized, and shuffling samples when loading data is constant in each epoch
+    set_random_seed(42)
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
-    
+
+if __name__ == "__main__":
+    perform_shadow_model_mia()

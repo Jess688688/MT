@@ -18,7 +18,7 @@ class TinyImageNet(LightningModule):
         self.model = models.resnet50(pretrained=True)
         in_features = self.model.fc.in_features
         self.model.fc = nn.Linear(in_features, out_channels)
-        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        self.criterion = nn.CrossEntropyLoss()
         self.learning_rate = learning_rate
         self.train_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_channels)
 
@@ -35,8 +35,8 @@ class TinyImageNet(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=1e-3)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+        optimizer = optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=25)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
 def load_partitioned_tiny_imagenet(file_path):
@@ -45,9 +45,6 @@ def load_partitioned_tiny_imagenet(file_path):
     x_train, y_train = data['train_data'], data['train_labels']
     x_test, y_test = data['test_data'], data['test_labels']
     return x_train, y_train, x_test, y_test
-
-partition_file = 'tiny_imagenet_partition1.pkl'  
-x_train, y_train, x_test, y_test = load_partitioned_tiny_imagenet(partition_file)
 
 def calculate_phash_decimal(image):
     pil_image = Image.fromarray(image)
@@ -61,25 +58,6 @@ def generate_sorted_train_phashes(raw_images):
     print("Sorted pHash values saved to sorted_train_phashes_decimal.npy")
     return sorted_phashes
 
-sorted_hashes = generate_sorted_train_phashes(x_train)
-
-mean = (0.485, 0.456, 0.406)
-std = (0.229, 0.224, 0.225)
-
-transform = transforms.Compose([
-    transforms.ToTensor(), 
-    transforms.Normalize(mean, std)
-])
-
-x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
-y_train = torch.tensor(y_train).squeeze().long()
-
-x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
-y_test = torch.tensor(y_test).squeeze().long()
-
-train_dataset = TensorDataset(x_train, y_train)
-test_dataset = TensorDataset(x_test, y_test)
-
 def generate_local_datasets(train_data, test_data, train_size=50000, test_size=5000):
     train_indices = random.sample(range(len(train_data)), train_size)
     test_indices = random.sample(range(len(test_data)), test_size)
@@ -92,23 +70,45 @@ def generate_local_datasets(train_data, test_data, train_size=50000, test_size=5
     
     return local_train_loader, local_test_loader, train_indices, test_indices
 
-local_train_loader, local_test_loader, train_indices, test_indices = generate_local_datasets(train_dataset, test_dataset)
-
 def train_local_model(model, train_loader, max_epochs=20):
     # trainer = Trainer(max_epochs=max_epochs, accelerator="auto", devices="auto", logger=False, enable_checkpointing=False)
     trainer = Trainer(max_epochs=max_epochs, accelerator="gpu", devices="auto", precision=16)
     trainer.fit(model, train_loader)
     return model
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = TinyImageNet().to(device) 
+def generate_target_model():
+    partition_file = 'tiny_imagenet_partition1.pkl'  
+    x_train, y_train, x_test, y_test = load_partitioned_tiny_imagenet(partition_file)
 
-trained_model = train_local_model(model, local_train_loader, max_epochs=20)
+    sorted_hashes = generate_sorted_train_phashes(x_train)
 
-# Save model and dataset indices
-torch.save(trained_model.state_dict(), "final_global_model_tiny_imagenet.pth") 
-torch.save(train_indices, "train_loader_tiny_imagenet.pth") 
-torch.save(test_indices, "test_loader_tiny_imagenet.pth") 
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
 
-print("Final global model saved as final_global_model_tiny_imagenet.pth")
-print("Train and test dataset indices saved as train_loader_tiny_imagenet.pth and test_loader_tiny_imagenet.pth")
+    transform = transforms.Compose([
+        transforms.ToTensor(), 
+        transforms.Normalize(mean, std)
+    ])
+
+    x_train = torch.stack([transform(Image.fromarray(img)) for img in x_train])
+    y_train = torch.tensor(y_train).squeeze().long()
+
+    x_test = torch.stack([transform(Image.fromarray(img)) for img in x_test])
+    y_test = torch.tensor(y_test).squeeze().long()
+
+    train_dataset = TensorDataset(x_train, y_train)
+    test_dataset = TensorDataset(x_test, y_test)
+
+    local_train_loader, local_test_loader, train_indices, test_indices = generate_local_datasets(train_dataset, test_dataset)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = TinyImageNet().to(device) 
+
+    trained_model = train_local_model(model, local_train_loader, max_epochs=20)
+
+    torch.save(trained_model.state_dict(), "final_global_model_tiny_imagenet.pth") 
+
+    print("Final global model saved as final_global_model_tiny_imagenet.pth")
+    
+if __name__ == "__main__":
+    generate_target_model()

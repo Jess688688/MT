@@ -3,21 +3,47 @@ from torch import nn
 import json
 import os
 import torch
-import lightning
+import lightning as L
 from lightning import Trainer
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
+import random
+import numpy as np
 
-class SoftmaxMLPClassifier(lightning.LightningModule):
-    def __init__(self, input_dim, hidden_dim, learning_rate=0.001):
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+class EnhancedBinaryClassifier(L.LightningModule):
+    def __init__(self, input_dim=10, num_filters=64, kernel_size=3, learning_rate=0.001, gamma=0.9, dropout=0.3):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, 2)
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=num_filters, kernel_size=kernel_size, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=num_filters, out_channels=num_filters * 2, kernel_size=kernel_size, padding=1)
+        self.conv3 = nn.Conv1d(in_channels=num_filters * 2, out_channels=num_filters * 4, kernel_size=kernel_size, padding=1)
+        self.bn1 = nn.BatchNorm1d(num_filters)
+        self.bn2 = nn.BatchNorm1d(num_filters * 2)
+        self.bn3 = nn.BatchNorm1d(num_filters * 4)
+
+        self.fc1 = nn.Linear((num_filters * 4) * input_dim, 256)
+        self.fc2 = nn.Linear(256, 64)
+        self.fc3 = nn.Linear(64, 2)
+        
+        self.dropout = nn.Dropout(dropout)
         self.learning_rate = learning_rate
+        self.gamma = gamma
 
     def forward(self, x):
+        x = x.unsqueeze(1)  # Add channel dimension
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
+        x = self.dropout(x)
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
@@ -29,14 +55,11 @@ class SoftmaxMLPClassifier(lightning.LightningModule):
         self.log('train_loss', loss)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits, y.long())
-        self.log('val_loss', loss)
-
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=self.gamma)
+        return [optimizer], [scheduler]
+
 
 class AttackModel:
     def __init__(self):
@@ -73,7 +96,7 @@ class AttackModel:
 
         attack_dataloader = DataLoader(attack_dataset, batch_size=128, shuffle=True, num_workers=0)
 
-        attack_model = SoftmaxMLPClassifier(10, 64)
+        attack_model = EnhancedBinaryClassifier(dropout = 0.3, gamma = 0.9)
 
         attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
@@ -116,7 +139,13 @@ class AttackModel:
         return precision, recall, f1
 
 
-if __name__ == "__main__":
+def perform_shadow_model_mia():
+    # initialization of model parameters is not randomized, and shuffling samples when loading data is constant in each epoch
+    set_random_seed(42)
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+
+
+if __name__ == "__main__":
+    perform_shadow_model_mia()
