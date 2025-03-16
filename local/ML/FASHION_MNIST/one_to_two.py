@@ -33,7 +33,7 @@ for i in range(num_classes):
     np.random.shuffle(test_indices)
     test_split = len(test_indices) // 2
     test1_indices.extend(test_indices[:test_split])
-    test2_indices.extend(test_indices[train_split:])
+    test2_indices.extend(test_indices[test_split:])
 
 train1_indices = np.array(train1_indices)
 train2_indices = np.array(train2_indices)
