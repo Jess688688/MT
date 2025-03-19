@@ -165,4 +165,4 @@ def perform_defense(num, weights, alpha):
     print("Prediction results are saved!")
 
 if __name__ == "__main__":
-    perform_defense([0, 1], [1, 1], 0.7)
+    perform_defense([0, 1], [0.5, 0.5], 0.6)

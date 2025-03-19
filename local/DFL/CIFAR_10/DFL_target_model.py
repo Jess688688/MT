@@ -14,6 +14,14 @@ import imagehash
 from pytorch_lightning import LightningModule
 import gc
 
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 class CIFAR10Model(LightningModule):
     def __init__(self, num_classes=10):
         super(CIFAR10Model, self).__init__()
@@ -65,6 +73,7 @@ def train_local_model(model, train_loader, max_epochs):
 
 
 def generate_DFL_target_model(num_participants, num_rounds, epochs_per_round):
+    set_random_seed(42)
     partition_file = 'cifar10_partition1.pkl'
     x_train, y_train, x_test, y_test = load_partitioned_cifar10(partition_file)
 
@@ -159,4 +168,4 @@ def generate_DFL_target_model(num_participants, num_rounds, epochs_per_round):
     print("train loader and test loader is saved，which is train_loader.pth 和 test_loader.pth")
 
 if __name__ == "__main__":
-    generate_DFL_target_model(num_participants = 10, num_rounds = 30, epochs_per_round = 5)
+    generate_DFL_target_model(num_participants = 10, num_rounds = 15, epochs_per_round = 10)

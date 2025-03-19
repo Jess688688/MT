@@ -178,4 +178,4 @@ def generate_DFL_shadow_result(num_participants, num_rounds, epochs_per_round):
     print("Final merged test result is saved as s_test_results.pt")
 
 if __name__ == "__main__":
-    generate_DFL_shadow_result(num_participants = 10, num_rounds = 30, epochs_per_round = 5)
+    generate_DFL_shadow_result(num_participants = 10, num_rounds = 15, epochs_per_round = 10)
