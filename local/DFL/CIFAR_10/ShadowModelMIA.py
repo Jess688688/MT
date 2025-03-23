@@ -80,7 +80,7 @@ class AttackModel:
 
         attack_model = SoftmaxMLPClassifier(10, 64).to(self.device)
 
-        attack_trainer = Trainer(max_epochs=50, accelerator="auto", devices="auto", logger=False,
+        attack_trainer = Trainer(max_epochs=100, accelerator="auto", devices="auto", logger=False,
                                     enable_checkpointing=False, enable_model_summary=False)
         attack_trainer.fit(attack_model, attack_dataloader)
 

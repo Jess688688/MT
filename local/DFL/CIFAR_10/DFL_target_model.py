@@ -23,29 +23,35 @@ def set_random_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 class CIFAR10Model(LightningModule):
-    def __init__(self, num_classes=10):
-        super(CIFAR10Model, self).__init__()
-        self.model = models.vgg16(pretrained=True)
-        self.model.classifier[6] = nn.Linear(4096, num_classes)
-        self.criterion = nn.CrossEntropyLoss()
-        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
+    def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
+        self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
+        self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
+        self.pool = torch.nn.MaxPool2d(2, 2)
+        self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
+        self.fc2 = torch.nn.Linear(512, out_channels)
+        self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, x):
-        return self.model(x)
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.pool(torch.relu(self.conv3(x)))
+        x = x.view(-1, 64 * 4 * 4)
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
     def training_step(self, batch, batch_idx):
-        inputs, labels = batch
-        outputs = self(inputs)
-        loss = self.criterion(outputs, labels)
-        acc = self.accuracy(outputs, labels)
-        self.log("train_loss", loss, prog_bar=True)
-        self.log("train_acc", acc, prog_bar=True)
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.criterion(logits, y)
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=0.0001)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
-        return [optimizer], [scheduler]
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
 
 def load_partitioned_cifar10(file_path):
     with open(file_path, 'rb') as f:

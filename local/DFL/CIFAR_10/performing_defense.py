@@ -13,15 +13,26 @@ from pytorch_lightning import LightningModule
 import torchmetrics
 
 class CIFAR10Model(LightningModule):
-    def __init__(self, num_classes=10):
-        super(CIFAR10Model, self).__init__()
-        self.model = models.vgg16(pretrained=True)
-        self.model.classifier[6] = nn.Linear(4096, num_classes)
-        self.criterion = nn.CrossEntropyLoss()
-        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=num_classes)
+    def __init__(self, in_channels=3, out_channels=10, learning_rate=1e-3):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.conv1 = torch.nn.Conv2d(in_channels, 16, 3, padding=1)
+        self.conv2 = torch.nn.Conv2d(16, 32, 3, padding=1)
+        self.conv3 = torch.nn.Conv2d(32, 64, 3, padding=1)
+        self.pool = torch.nn.MaxPool2d(2, 2)
+        self.fc1 = torch.nn.Linear(64 * 4 * 4, 512)
+        self.fc2 = torch.nn.Linear(512, out_channels)
+        self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, x):
-        return self.model(x)
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.pool(torch.relu(self.conv3(x)))
+        x = x.view(-1, 64 * 4 * 4)
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 def preload_pca_images(pca_folder="PCA"):
     pca_images = {}
@@ -165,4 +176,4 @@ def perform_defense(num, weights, alpha):
     print("Prediction results are saved!")
 
 if __name__ == "__main__":
-    perform_defense([0, 1], [0.5, 0.5], 0.6)
+    perform_defense([0, 1], [0, 1], 0.8)

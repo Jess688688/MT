@@ -15,7 +15,7 @@ if __name__ == "__main__":
     rst.perform_random_shadow_train(5000)
 
     for alpha in np.arange(0, 1.1, 0.1):
-        pd.perform_defense([0, 1], [0.5, 0.5], alpha)
+        pd.perform_defense([0, 1], [0, 1], alpha)
         rtt.perform_random_target_train(5000)
         smm.perform_shadow_model_mia()
         cmm.perform_class_metric_mia()
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     ]
 
     for num, weights in defense_params:
-        pd.perform_defense(num, weights, 0.60)
+        pd.perform_defense(num, weights, 0.80)
         rtt.perform_random_target_train(5000)
         smm.perform_shadow_model_mia()
         cmm.perform_class_metric_mia()
