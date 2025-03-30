@@ -78,7 +78,7 @@ class AttackModel:
 
     def MIA_shadow_model_attack(self):
 
-        shadow_train_res = torch.load("random_shadow_train_res.pt")
+        shadow_train_res = torch.load("s_train_results.pt")
         shadow_test_res = torch.load("s_test_results.pt")
 
         shadow_train_pre = shadow_train_res[0]
@@ -115,7 +115,7 @@ class AttackModel:
                 predicted_label = torch.cat(predicted_label, dim=0)
             return predicted_label
 
-        in_eval_pre = torch.load("random_target_train_res.pt")
+        in_eval_pre = torch.load("train_results.pt")
         out_eval_pre = torch.load("test_results.pt")
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
@@ -141,6 +141,7 @@ def perform_shadow_model_mia():
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    return precision, recall, f1
 
 if __name__ == "__main__":
     perform_shadow_model_mia()
