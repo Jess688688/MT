@@ -49,6 +49,7 @@ class BinaryClassifier(lightning.LightningModule):
 
 class AttackModel:
     def __init__(self):
+        # 添加设备属性
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     def evaluate_metrics(self, tp, fp, in_predictions):
@@ -58,11 +59,12 @@ class AttackModel:
         return precision, recall, f1
 
     def calculate_accuracy(self, predictions, labels, save_path=None):
-        labels = labels.view(-1)
+        labels = labels.view(-1)  # 确保 labels 形状正确
 
-        predictions = torch.softmax(predictions, dim=1)
+        predictions = torch.softmax(predictions, dim=1)  # 先做 softmax
         predicted_classes = torch.argmax(predictions, dim=1)
 
+        # 打印前 10 个预测类别和真实类别
         print("Predicted Classes (First 10):", predicted_classes[:10].tolist())
         print("True Labels (First 10):", labels[:10].tolist())
 
@@ -82,7 +84,11 @@ class AttackModel:
         shadow_test_res = torch.load("shadow_test_res_tiny_imagenet.pt")
 
         shadow_train_pre = shadow_train_res[0]
+        # print("shadow_train_pre:")
+        # print(len(shadow_train_pre))
         shadow_test_pre = shadow_test_res[0]
+        # print("shadow_test_pre:")
+        # print(len(shadow_test_pre))
 
         in_labels = torch.ones(shadow_train_pre.shape[0], dtype=torch.long)
         out_labels = torch.zeros(shadow_test_pre.shape[0], dtype=torch.long)
@@ -107,7 +113,7 @@ class AttackModel:
             with torch.no_grad():
                 for batch in dataloader:
                     logits = model(batch)
-                    _, predicted = torch.max(logits, 1)
+                    _, predicted = torch.max(logits, 1)  # max value, max value index
 
                     true_items = predicted == 1
                     predicted_label.append(true_items)
@@ -117,6 +123,11 @@ class AttackModel:
 
         in_eval_pre = torch.load("train_results.pt")
         out_eval_pre = torch.load("test_results.pt")
+        
+        # print("in_eval_pre:")
+        # print(len(in_eval_pre))
+        # print("out_eval_pre:")
+        # print(len(out_eval_pre))
 
         in_predictions = in_out_samples_check(attack_model.to(self.device), in_eval_pre)
         out_predictions = in_out_samples_check(attack_model.to(self.device), out_eval_pre)
@@ -126,6 +137,7 @@ class AttackModel:
 
         precision, recall, f1 = self.evaluate_metrics(true_positives, false_positives, in_predictions)
 
+        # Calculate accuracy for target training and testing datasets
         tiny_imagenet_train_accuracy = self.calculate_accuracy(in_eval_pre[0], in_eval_pre[1])
         tiny_imagenet_test_accuracy = self.calculate_accuracy(out_eval_pre[0], out_eval_pre[1])
 
@@ -141,6 +153,7 @@ def perform_shadow_model_mia():
     attack_model = AttackModel()
     precision, recall, f1 = attack_model.MIA_shadow_model_attack()
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    return precision, recall, f1
 
 if __name__ == "__main__":
     perform_shadow_model_mia()

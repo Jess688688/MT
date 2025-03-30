@@ -13,9 +13,11 @@ class ClassMetricBasedAttack:
         self.s_in_outputs, self.s_in_labels = self.shadow_train_res
         self.s_out_outputs, self.s_out_labels = self.shadow_test_res
 
+        # Extract Target model outputs and labels
         self.t_in_outputs, self.t_in_labels = self.in_eval_pre
         self.t_out_outputs, self.t_out_labels = self.out_eval_pre
 
+        # Convert to NumPy arrays and ensure labels are 1D
         self.s_in_outputs = self.s_in_outputs.cpu().detach().numpy()
         self.s_in_labels = self.s_in_labels.cpu().detach().numpy().flatten()
         self.s_out_outputs = self.s_out_outputs.cpu().detach().numpy()
@@ -25,16 +27,19 @@ class ClassMetricBasedAttack:
         self.t_out_outputs = self.t_out_outputs.cpu().detach().numpy()
         self.t_out_labels = self.t_out_labels.cpu().detach().numpy().flatten()
 
+        # Ensure outputs are 1D where necessary
         self.s_in_conf = np.array([self.s_in_outputs[i, self.s_in_labels[i]] for i in range(len(self.s_in_labels))])
         self.s_out_conf = np.array([self.s_out_outputs[i, self.s_out_labels[i]] for i in range(len(self.s_out_labels))])
         self.t_in_conf = np.array([self.t_in_outputs[i, self.t_in_labels[i]] for i in range(len(self.t_in_labels))])
         self.t_out_conf = np.array([self.t_out_outputs[i, self.t_out_labels[i]] for i in range(len(self.t_out_labels))])
 
+        # Calculate entropy
         self.s_in_entr = self._entr_comp(self.s_in_outputs)
         self.s_out_entr = self._entr_comp(self.s_out_outputs)
         self.t_in_entr = self._entr_comp(self.t_in_outputs)
         self.t_out_entr = self._entr_comp(self.t_out_outputs)
 
+        # Calculate modified entropy
         self.s_in_m_entr = self._m_entr_comp(self.s_in_outputs, self.s_in_labels)
         self.s_out_m_entr = self._m_entr_comp(self.s_out_outputs, self.s_out_labels)
         self.t_in_m_entr = self._m_entr_comp(self.t_in_outputs, self.t_in_labels)
@@ -84,15 +89,19 @@ class ClassMetricBasedAttack:
 
     def mem_inf_benchmarks(self):
         results = {}
+
+        # Prediction Class Confidence
         
         results["Prediction Class Confidence"] = self._mem_inf_thre(
             self.s_in_conf, self.s_out_conf, self.t_in_conf, self.t_out_conf
         )
 
+        # Prediction Class Entropy
         results["Prediction Class Entropy"] = self._mem_inf_thre(
             -self.s_in_entr, -self.s_out_entr, -self.t_in_entr, -self.t_out_entr
         )
 
+        # Prediction Modified Entropy
         results["Prediction Modified Entropy"] = self._mem_inf_thre(
             -self.s_in_m_entr, -self.s_out_m_entr, -self.t_in_m_entr, -self.t_out_m_entr
         )
@@ -101,20 +110,26 @@ class ClassMetricBasedAttack:
 
 
 def perform_class_metric_mia():
+    # File paths
     shadow_train_res_path = "random_shadow_train_res.pt"
     shadow_test_res_path = "shadow_test_res.pt"
     in_eval_pre_path = "train_results.pt"
     out_eval_pre_path = "test_results.pt"
 
+    # Initialize the attack class
     attack = ClassMetricBasedAttack(
         shadow_train_res_path, shadow_test_res_path, in_eval_pre_path, out_eval_pre_path
     )
 
+    # Get benchmark results
     benchmarks = attack.mem_inf_benchmarks()
 
+    result = []
     for method, metrics in benchmarks.items():
         precision, recall, f1 = metrics
         print(f"{method}: Precision={precision:.4f}, Recall={recall:.4f}, F1-Score={f1:.4f}")
+        result.extend([precision, recall, f1])
+    return result
 
 if __name__ == "__main__":
     perform_class_metric_mia()
