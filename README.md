@@ -14,3 +14,7 @@
 * ShadowModelMIA.py: Perform shadow model based MIA.
 * ClassMetricMIA.py: Perform metric based MIA.
 * optimal_defense_intensity.py: Automatically determines the defense parameters, including data augmentation intensity and PCA composite image fusion weight, to find an appropriate defense intensity for each image dataset.
+* test.py: Control the execution of other scripts and its content reflects the sequence in which other codes are run.
+
+# code execution order
+run `one_to_two.py` and `PCA.py` first, then run `test.py`.
